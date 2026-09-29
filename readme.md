@@ -1,5 +1,5 @@
 # ⚙️ TradBot-I
-### A Personal AI Assistant — By CodeDrop Labs
+### A Personal Trading AI Assistant — By CodeDrop Labs
 
 
 
