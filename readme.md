@@ -1,4 +1,4 @@
-# ⚙️ TradBot-I (54)
+# ⚙️ TradBot-I
 ### A Personal AI Assistant — By CodeDrop Labs
 
 
@@ -9,7 +9,7 @@ A real-time voice AI that can hear, see, speak, and control your computer — on
 
 ## ✨ Overview
 
-**TradBot-I is the release where the assistant gets a face.** A holographic head sits at the centre of the HUD and **speaks your assistant's words with real lip-sync** — not a jaw flapping to the volume meter, but actual mouth shapes: lips closing on *m*, *b*, *p*, spreading on *i*, rounding on *u*. Brows ride the sentence, the eyes flick between fixation points, and it blinks. Turn the sound down and you can follow roughly what it just said.
+**TradBot-I is the release where traders got an assistant.** A holographic head sits at the centre of the HUD and **speaks your assistant's words with real lip-sync** — not a jaw flapping to the volume meter, but actual mouth shapes: lips closing on *m*, *b*, *p*, spreading on *i*, rounding on *u*. Brows ride the sentence, the eyes flick between fixation points, and it blinks. Turn the sound down and you can follow roughly what it just said.
 
 It ships as **zero extra dependencies and one 25 KB asset**. The face is real measured human geometry; everything else — the skull, the rig, the lighting — is generated at startup and drawn in software, so it looks identical on a gaming rig, with no GPU driver in the loop.
 
@@ -95,7 +95,7 @@ edits, or closes trades.
 
 ---
 
-## 🆕 What's New in TradBot-I
+## 🆕 What's in TradBot-I
 
 No hardcoded language, no GPU requirement, no new dependencies — identical on Windows, macOS and Linux.
 
@@ -178,9 +178,9 @@ All prompt wording lives in `core/prompt.txt` with `{tokens}` the app fills in �
 
 ---
 
-## 🔄 The Foundation Update 
+## 🔄 The Foundation
 
-No new dependencies. No bundled asset files. No hardcoded language, and nothing that assumes one operating system.
+No dependencies. No bundled asset files. No hardcoded language, and nothing that assumes one operating system.
 
 ### 🧠 A memory that actually remembers
 
@@ -232,7 +232,7 @@ The token is now issued by the interface. Shutdown, restart and WiFi put a banne
 
 > The split between the two mechanisms is about reversibility, not about how alarming a word sounds. Anything undoable is done at once; only the genuinely irreversible asks. An assistant that checks with you before turning the volume down is one you stop talking to.
 
-### 🎧 It finally asks which microphone
+### 🎧 It asks which microphone
 
 Both audio streams opened with no device argument at all, so they always took whatever the OS called "default" — and on Windows that *moves on its own* the moment you plug a headset in. "JARVIS can't hear me" almost always meant "JARVIS is listening to the webcam".
 
@@ -269,22 +269,6 @@ It is held in memory only, deliberately: writing it to disk would make a fresh l
 * An unresolvable saved audio device, or one the driver refuses to open, falls back to the system default and says so — on both the microphone and the speakers.
 * A rejected session-resumption handle is dropped after one attempt, so an expired handle can never be replayed on every retry and prevent the reconnect it exists to protect.
 
-
-
----
-
-## 🗺️ Mark Roadmap
-
-| Mark | Focus |
-|---|---|
-| **XLIX** | Auto-start · clipboard intelligence · assistant customization |
-| **L** | Session memory · background monitoring · proactive 2.0 · instant vision |
-| **LI** | Plugin system · affective dialog · proactive audio · unlimited sessions |
-| **LII** | Voice picker · live theming · reactive HUD · recallable memory · undo · real confirmation · audio device picker · session continuity |
-| **LIII** | Wake word · Gemini 3.1 Flash Live · instant acknowledgment · self-describing action/plugin architecture |
-| **LIV** | Holographic avatar · viseme lip-sync · facial acting · face-as-status · push-to-talk · self-echo guard · runtime self-knowledge & limits |
-| *shared* | The last five above also shipped to LIII, LIV and LV at the same time — moving up a Mark never loses them |
-| **LV+** | Interrupt by voice · conversation history · plugin files: email · quiz mode · calendar · home assistant · 3D-printer |
 
 ---
 
@@ -388,7 +372,7 @@ TradBot-I/
 
 ## 🔒 Your Data
 
-Everything stays on your machine. There is no MARK server, no telemetry and no account.
+Everything stays on your machine. There is no server, no telemetry and no account.
 
 | What | Where | Notes |
 |---|---|---|
@@ -402,19 +386,11 @@ Your voice is streamed to Google's Gemini Live API while a session is open; that
 
 ---
 
-## ⚠️ License
-
-Personal and non-commercial use only.
-Licensed under **[Creative Commons BY-NC 4.0](https://creativecommons.org/licenses/by-nc/4.0/)**.
-
----
-
 ## 👤 Connect with the Creator
 
 Engineered by a developer building a real-world JARVIS-style assistant.
-⭐ **Star the repository to support the journey to Mark 100.**
+⭐ **Star the repository to support.**
 
 | Platform | Link |
 | --- | --- |
-| YouTube | [@FatihMakes](https://www.youtube.com/@FatihMakes) |
-| Instagram | [@fatihmakes](https://www.instagram.com/fatihmakes) |
+| Instagram | [@codedroplabs](https://www.instagram.com/codedroplabs) |
