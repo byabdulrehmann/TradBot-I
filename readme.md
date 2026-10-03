@@ -1,5 +1,5 @@
 # ⚙️ TradBot-I
-### A Personal Trading AI Assistant — By CodeDrop Labs
+### A Personal AI Assistant — By CodeDrop Labs
 
 
 
@@ -9,7 +9,7 @@ A real-time voice AI that can hear, see, speak, and control your computer — on
 
 ## ✨ Overview
 
-**TradBot-I is the release where traders got an assistant.** A holographic head sits at the centre of the HUD and **speaks your assistant's words with real lip-sync** — not a jaw flapping to the volume meter, but actual mouth shapes: lips closing on *m*, *b*, *p*, spreading on *i*, rounding on *u*. Brows ride the sentence, the eyes flick between fixation points, and it blinks. Turn the sound down and you can follow roughly what it just said.
+**TradBot-I is the release where the assistant gets a face.** A holographic head sits at the centre of the HUD and **speaks your assistant's words with real lip-sync** — not a jaw flapping to the volume meter, but actual mouth shapes: lips closing on *m*, *b*, *p*, spreading on *i*, rounding on *u*. Brows ride the sentence, the eyes flick between fixation points, and it blinks. Turn the sound down and you can follow roughly what it just said.
 
 It ships as **zero extra dependencies and one 25 KB asset**. The face is real measured human geometry; everything else — the skull, the rig, the lighting — is generated at startup and drawn in software, so it looks identical on a gaming rig, with no GPU driver in the loop.
 
@@ -19,20 +19,74 @@ Underneath, TradBot-I rebuilt how the assistant knows itself — what it is, wha
 
 It's not just an assistant — it's an extension of your digital life.
 
-### Trading monitor
+### Market intelligence
 
-The remote dashboard includes a read-only forex monitor. On Windows, install
-MetaTrader 5's Python package and keep the MetaTrader 5 desktop terminal open
-and logged into the account you want to inspect:
+The read-only market skill uses the logged-in MetaTrader 5 desktop terminal for
+XAUUSD, BTCUSD, and GBPUSD quotes, five-minute trend context, spread/volatility
+checks, account margin, open positions, exposure by symbol, and recent closed-
+trade patterns. The on-screen quotes refresh every five seconds and show source
+and stale status. They use the logged-in MT5 broker feed when available; without
+MT5, XAUUSD falls back to Gold-API public spot and BTCUSD/GBPUSD to Yahoo Finance.
+Public quotes may be delayed and are not guaranteed to match a broker. Account,
+exposure, and trade-behavior analysis require MT5. No feed can promise 100%
+accuracy. JARVIS never places, edits, or closes orders.
+
+TradingView Watch captures only a visible, foreground window with “TradingView”
+in its title every 15 seconds while enabled in ⚙ → Controls. Those window frames
+are sent to Gemini for visual comparison; the full desktop is not captured.
+The watcher pauses when TradingView is not foreground, minimized, or blocked by
+OS permissions. macOS may require Screen Recording permission; Linux Wayland
+compositors may prevent window discovery. It reports only high-confidence,
+directly visible changes and never infers emotion. Behavioral risk alerts use
+MT5 trade history instead.
+
+Ask JARVIS to:
+
+- Analyze a symbol, such as `EURUSD`.
+- Check account balance, margin, positions, or exposure.
+- Review current risk conditions or recent trading behavior.
+- Find current high-impact market headlines.
+- Show monthly closed-trade history or open a TradingView chart.
+
+On Windows, keep MetaTrader 5 open and logged into the account you want to
+inspect. The Python package is included by `setup.py`; manual installation is:
 
 ```bash
 pip install MetaTrader5
 ```
 
-The dashboard groups closed deals by UTC month and shows trade count, total
-profit, total loss, and net result. The TradingView control opens an analysis
-chart for a symbol such as `EURUSD` or `GBPJPY`. This integration never places,
-edits, or closes trades.
+Risk checks flag margin below 200%, five-minute volatility at least 2.5 times
+its recent baseline, spreads at least 3 times normal, eight or more closed
+positions in an hour, a three-loss streak, re-entry within three minutes of a
+loss, or a position size over 1.5 times the preceding losing position. These
+are transparent heuristics, not personalized risk limits or claims about
+emotional intent.
+Gold, USD, macro-event, and geopolitical headlines are searched every five
+minutes and keyword-triaged through DuckDuckGo News. This is not an official
+red-folder economic calendar and can miss or misclassify events. Live answers
+still depend on the MT5 terminal, network, and Gemini response time.
+
+Voice stays awake while the app runs; wake-word sleep gating is disabled. This
+means microphone audio remains connected to Gemini while the app is active,
+unless it is muted or push-to-talk is enabled and not held.
+Operating-system sleep, network loss, or provider downtime cannot be prevented
+by the application.
+
+### Daily delivery
+
+Daily reports are disabled until at least one recipient and provider are
+configured in local environment variables. They run once per local day at
+`09:00` by default; set `JARVIS_MARKET_UPDATE_AT` to another `HH:MM` time.
+
+- Email: `JARVIS_DAILY_EMAIL_TO`, `JARVIS_SMTP_HOST`, `JARVIS_SMTP_PORT`,
+    `JARVIS_SMTP_USERNAME`, `JARVIS_SMTP_PASSWORD`; optionally set `JARVIS_EMAIL_FROM`.
+- WhatsApp: Twilio `JARVIS_TWILIO_ACCOUNT_SID`, `JARVIS_TWILIO_AUTH_TOKEN`,
+    `JARVIS_TWILIO_WHATSAPP_FROM`, and `JARVIS_DAILY_WHATSAPP_TO`.
+- Voice call: the same Twilio account variables plus `JARVIS_TWILIO_CALL_FROM`
+    and `JARVIS_DAILY_CALL_TO`.
+
+Twilio must be enabled for the chosen sender and recipient. Configure credentials
+locally, never in chat or source control, then restart JARVIS.
 
 ---
 
@@ -49,7 +103,7 @@ edits, or closes trades.
 | 🎚️ Push-to-Talk | Hold **Ctrl+Space** and the mic opens — closed the rest of the time. Truly global on Windows, window-scoped elsewhere |
 | 🔇 Self-Echo Guard | Never answers its own last sentence: the tail of its own voice is recognised and dropped without muting you |
 | 🪪 Runtime Self-Knowledge | Name, OS, abilities **and limits** are generated from the live system each session — rename it or add a plugin and it knows |
-| 🎙️ Wake Word | Local **"Hey Jarvis"** detection — sleeps until called, auto-sleeps after 2 min of silence, and never streams audio while asleep |
+| 🎙️ Always Awake | Voice stays available while the app runs; microphone audio is connected to Gemini until muted or the app exits |
 | ⚡ Instant Acknowledgment | Speaks a short, context-aware reply in **your language** the instant a longer task starts — no more silent waiting |
 | 🚀 Faster Live Engine | Runs on **Gemini 3.1 Flash Live** — roughly 2× faster time-to-first-word than the previous model |
 | 🧩 Self-Describing Skills | Actions and plugins share one shape (`TOOL` / `PLUGIN` dict + `run()`), auto-discovered at launch — adding a skill is a single file |
@@ -78,6 +132,7 @@ edits, or closes trades.
 | 🌤️ Weather Report | Live weather data for your city, personalized from memory |
 | 🗺️ Dynamic Content Panel | Scrollable display layer beneath the HUD that renders web results, news, and search data |
 | 🔍 Multi-Mode Web Search | `news` / `research` / `price` / `compare` / `search` — Gemini Grounded first, DDG fallback |
+| 📈 Market Intelligence | Live MT5 price/trend, exposure and account checks, risk alerts, trade-pattern monitoring, and headline triage — read-only |
 | ⏰ Smart Reminders | OS-native scheduled notifications (Windows Task Scheduler / macOS LaunchAgent / Linux systemd) |
 | ✈️ Flight Finder | Live flight price and availability lookup |
 | 🎮 Game Updater | Checks and triggers game updates on Steam and Epic Games on demand |
@@ -140,7 +195,7 @@ You read a gaze faster than you read a word, so the head tells you what the assi
 ### Talking to it
 
 #### 🎚️ Push-to-talk
-Wake word is hands-free, but in a meeting or a noisy room a key is faster and never mishears. Turn on **⚙ → PUSH-TO-TALK** and the microphone stays **closed** until you hold **Ctrl+Space** — nothing leaves the machine while you are not holding it. Holding the chord also wakes the assistant, so it doubles as a silent alternative to saying the wake word.
+JARVIS stays awake while the app runs. Turn on **⚙ → PUSH-TO-TALK** and microphone audio is sent only while you hold **Ctrl+Space**. With push-to-talk off, the live microphone remains connected unless you mute it. Wake-word sleep gating is disabled in always-awake mode.
 
 On **Windows** the chord is genuinely global: it works while any other application has focus, implemented by polling two virtual-key codes thirty times a second, with **no new dependency** and no message loop. On **macOS and Linux** there is no dependency-free way to read global key state, so the chord is bound inside the window instead — and the app **says so in the log** rather than pretending otherwise.
 
@@ -174,13 +229,13 @@ All prompt wording lives in `core/prompt.txt` with `{tokens}` the app fills in �
 * The **brows barely moved** — 6 px of travel on a 250 px head, because the rig weights halved an already small constant. Derived from the anatomy instead: 19 px.
 * The activity log opened with **a dozen lines of plumbing** — one per plugin loaded, plus wake-word and briefing status. The console still carries the full boot transcript; the log now shows your conversation, state changes and anything you have to act on, and nothing else.
 
->**🧩 Plugin System**, **♾️ Unlimited Sessions**, **🎨 Live Theming**, **🎙️ Wake Word** and **🧩 Self-Describing Skills** are all here.
+>**🧩 Plugin System**, **♾️ Unlimited Sessions**, **🎨 Live Theming**, and **🧩 Self-Describing Skills** are all here.
 
 ---
 
-## 🔄 The Foundation
+## 🔄 The Foundation Update 
 
-No dependencies. No bundled asset files. No hardcoded language, and nothing that assumes one operating system.
+No new dependencies. No bundled asset files. No hardcoded language, and nothing that assumes one operating system.
 
 ### 🧠 A memory that actually remembers
 
@@ -232,7 +287,7 @@ The token is now issued by the interface. Shutdown, restart and WiFi put a banne
 
 > The split between the two mechanisms is about reversibility, not about how alarming a word sounds. Anything undoable is done at once; only the genuinely irreversible asks. An assistant that checks with you before turning the volume down is one you stop talking to.
 
-### 🎧 It asks which microphone
+### 🎧 It finally asks which microphone
 
 Both audio streams opened with no device argument at all, so they always took whatever the OS called "default" — and on Windows that *moves on its own* the moment you plug a headset in. "JARVIS can't hear me" almost always meant "JARVIS is listening to the webcam".
 
@@ -283,7 +338,7 @@ python main.py
 
 `setup.py` only ever installs what your operating system needs — the Windows-only libraries are skipped automatically on macOS and Linux, and vice-versa. It also checks your Python version up front, so a wrong interpreter fails with a sentence instead of a wall of pip output. Prefer to do it by hand? `pip install -r requirements.txt` works too.
 
-> ⚠️ **Installation Note:** If you hit a `ModuleNotFoundError` for an OS-specific package, install it with `pip install <module_name>`. The optional **wake word** engine is *not* installed here — grab it in one click from **⚙ → WAKE WORD** inside the app.
+> ⚠️ **Installation Note:** If you hit a `ModuleNotFoundError` for an OS-specific package, install it with `pip install <module_name>`. The local wake-word detector is not active in always-awake mode.
 
 ---
 
@@ -293,11 +348,10 @@ python main.py
 | --- | --- |
 | **OS** | Windows 10/11, macOS, or Linux |
 | **Python** | 3.11, 3.12 or 3.13 |
-| **Microphone** | Required for voice interaction (and for the "Hey Jarvis" wake word) |
+| **Microphone** | Required for voice interaction |
 | **Speakers** | Required for voice replies |
 | **API Key** | Free Gemini API key (entered on first launch → `config/api_keys.json`) |
 | **GPU** | **Not required.** The avatar is rendered in software |
-| **Wake word** *(optional)* | One-click download from ⚙ → WAKE WORD (`openwakeword`, a few MB, fully local) |
 
 ---
 
@@ -319,6 +373,8 @@ TradBot-I/
 ├── actions/                  # Bundled skills — each self-describes via a TOOL dict + handler
 │   ├── web_search.py         # Gemini + DDG parallel search (news, research, price, compare)
 │   ├── screen_processor.py   # Screen & webcam capture for vision
+│   ├── trading_monitor.py    # Read-only MT5 prices, exposure, behavior, risk and headline triage
+│   ├── market_notifications.py # Optional daily SMTP/Twilio delivery, disabled until configured
 │   ├── background_monitor.py # User-configured topic watching — daily DDG check
 │   ├── proactive.py          # Proactive 2.0 — time/context/rotation-aware check-ins
 │   ├── reminder.py           # OS-native scheduled notifications
@@ -354,7 +410,7 @@ TradBot-I/
 │   ├── audio_devices.py      # Microphone / speaker list — filtered, measured, resolved by name
 │   ├── plugin_loader.py      # Plugin engine — discovery, validation, crash isolation
 │   ├── action_loader.py      # Bundled-action engine — the built-in twin of plugin_loader
-│   └── wake_word.py          # Local "Hey Jarvis" detector — own thread, offline, opt-in
+│   └── wake_word.py          # Local detector retained in source; sleep gating disabled in always-awake mode
 └── config/
     ├── api_keys.json         # API key, name, voice, colour, toggles — created on first launch (git-ignored)
     └── certs/                # Self-signed TLS pair for the phone dashboard — generated locally (git-ignored)
@@ -372,7 +428,7 @@ TradBot-I/
 
 ## 🔒 Your Data
 
-Everything stays on your machine. There is no server, no telemetry and no account.
+Everything stays on your machine. There is no MARK server, no telemetry and no account.
 
 | What | Where | Notes |
 |---|---|---|
