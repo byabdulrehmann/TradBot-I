@@ -21,15 +21,54 @@ It's not just an assistant — it's an extension of your digital life.
 
 ### Market intelligence
 
-The read-only market skill uses the logged-in MetaTrader 5 desktop terminal for
-XAUUSD, BTCUSD, and GBPUSD quotes, five-minute trend context, spread/volatility
+The read-only market skill uses a broker-issued MetaTrader 5 investor login for
+configurable live-price symbols, five-minute trend context, spread/volatility
 checks, account margin, open positions, exposure by symbol, and recent closed-
-trade patterns. The on-screen quotes refresh every five seconds and show source
-and stale status. They use the logged-in MT5 broker feed when available; without
-MT5, XAUUSD falls back to Gold-API public spot and BTCUSD/GBPUSD to Yahoo Finance.
-Public quotes may be delayed and are not guaranteed to match a broker. Account,
+trade patterns. Add, rename, or remove up to 12 symbols under ⚙ → **Trading
+Settings**; use the exact symbol name supplied by the broker. The on-screen
+quotes refresh every five seconds and show source and stale status. With investor credentials configured, quotes use the MT5 broker
+feed; without MT5, XAUUSD falls back to Gold-API public spot and BTCUSD/GBPUSD to Yahoo Finance.
+Other custom symbols require a configured MT5 account. Public quotes may be
+delayed and are not guaranteed to match a broker. Account,
 exposure, and trade-behavior analysis require MT5. No feed can promise 100%
 accuracy. JARVIS never places, edits, or closes orders.
+
+First-run setup collects the Gemini API key and the trader's own setup, risk per
+trade, daily loss limit, daily trade cap, and common challenge. MT5 is optional;
+when enabled, setup asks for the account number, broker server, and broker-issued
+investor/read-only password. JARVIS does not attach to a normally logged-in
+trading terminal when investor credentials are absent. Credentials are stored in
+the operating system's credential vault, not `config/api_keys.json`.
+JARVIS uses a short weekday greeting on app launch rather than repeating its
+introduction or recapping previous sessions.
+After setup, open ⚙ → **Trading Settings** to update the trading plan, limits,
+Gemini key, or operating system, and to add, rename, select, or remove multiple
+read-only MT5 accounts. Each account is analyzed independently; history and
+trade reflections stay tagged to their account. Account passwords remain in
+the operating system's credential vault.
+
+Configured live-price symbols are requested from the selected MT5 account.
+The broker must offer each pair under the entered name (or a supported broker
+suffix match), and provide a current tick and recent five-minute price history;
+otherwise JARVIS reports that quote as unavailable. Custom pairs do not receive
+public-feed fallback quotes.
+
+When asked, JARVIS can guide a one-question-at-a-time pre-trade check-in against
+the trader's stated plan. With MT5 connected, it can also ask a brief question
+after a newly detected position opens or closes. Closed MT5 history and
+trader-authored reflections are kept locally in
+`memory/trading_journal.sqlite3` and can be reviewed for recurring patterns.
+JARVIS also starts one daily check-in during an idle moment, asking one question
+at a time about the trader's reported mood,
+market view, intended direction, confidence, readiness, and risk guardrails. These
+answers are stored locally as self-reports; mood is not used to diagnose the trader
+or predict trading performance.
+The local journal is loaded into coaching context in future sessions, so JARVIS
+can use recorded outcomes and the trader's own reflections as context.
+The history is descriptive: JARVIS does not claim to know or diagnose a trader's
+psychology, infer emotions from P/L, predict outcomes, or prescribe a trade.
+Daily loss-limit comparisons use current balance as an approximation and are
+not broker-enforced limits.
 
 TradingView Watch captures only a visible, foreground window with “TradingView”
 in its title every 15 seconds while enabled in ⚙ → Controls. Those window frames
@@ -61,6 +100,10 @@ positions in an hour, a three-loss streak, re-entry within three minutes of a
 loss, or a position size over 1.5 times the preceding losing position. These
 are transparent heuristics, not personalized risk limits or claims about
 emotional intent.
+At startup, JARVIS gives a short greeting with the current weekday and asks what
+you want to work on. This greeting does not repeat the trading-assistant
+introduction, fetch headlines, or recap the previous session. The startup greeting
+can be toggled in the HUD.
 Gold, USD, macro-event, and geopolitical headlines are searched every five
 minutes and keyword-triaged through DuckDuckGo News. This is not an official
 red-folder economic calendar and can miss or misclassify events. Live answers
@@ -124,9 +167,9 @@ locally, never in chat or source control, then restart JARVIS.
 | 👁️ Visual Awareness | Screen capture and webcam vision piped into your main Gemini session, labelled by source |
 | 🧠 Persistent Memory | Deeply remembers projects, preferences, and personal context across sessions |
 | ⌨️ Hybrid Input | Seamlessly switch between keyboard typing and voice commands |
-| 🌅 Morning Briefing | On first boot: greets you, reads the time, recaps yesterday, and fetches live news |
+| 🌅 Startup Greeting | On launch: says hello, gives the weekday, and asks what you want to work on |
 | 🔔 Proactive 2.0 | Time-aware, context-aware check-ins — knows the time of day, your projects, and what you've been discussing |
-| 🗓️ Session Memory | Summarises each conversation and mentions it naturally next morning — consumed after use, never repeats |
+| 🗓️ Session Memory | Summarises conversations locally; startup greetings do not repeat the summary |
 | 👁️‍🗨️ Background Monitoring | User-configured topic watching — checks for new headlines once a day and alerts naturally |
 | 📊 Hardware Monitoring | Continuous CPU, RAM, GPU and temperature telemetry with localized voice alerts |
 | 🌤️ Weather Report | Live weather data for your city, personalized from memory |
@@ -147,6 +190,13 @@ locally, never in chat or source control, then restart JARVIS.
 | ⚡ Auto-Start on Boot | Registers with the OS startup system (registry / LaunchAgent / .desktop) |
 | 📋 Clipboard Intelligence | Copy any text → floating panel with Translate / Summarise / Explain / Fix |
 | 🪪 Assistant Customization | Change the assistant name, your name, voice, and colour from the UI — takes effect immediately |
+
+For phone pairing, keep the phone and computer on the same trusted Wi-Fi network,
+then scan the QR code shown by **Remote Control**. The QR link opens the local
+HTTP dashboard on port 8000, avoiding a self-signed certificate blocking the page.
+Phone microphone access over HTTP requires Chrome's **Insecure origins treated
+as secure** flag for the exact dashboard origin; the dashboard shows setup
+instructions when needed. Use remote access only on a trusted private network.
 
 ---
 
@@ -315,7 +365,7 @@ Your choice is stored **by name, not by index** — indices shift whenever somet
 
 The handle is captured and replayed now. A network blip, or switching your microphone, keeps the conversation intact.
 
-It is held in memory only, deliberately: writing it to disk would make a fresh launch continue yesterday's chat, which sounds appealing but breaks the session-summary flow — a conversation that never ends never produces a summary, and the "yesterday we talked about…" line in the morning briefing silently disappears. Changing the **voice** also starts clean on purpose, since resuming restores the server's session state and would likely bring the old voice back with it.
+It is held in memory only, deliberately: writing it to disk would make a fresh launch continue yesterday's chat instead of starting with a clean session and the short weekday greeting. Session summaries may still be stored locally, but the startup greeting does not replay them. Changing the **voice** also starts clean on purpose, since resuming restores the server's session state and would likely bring the old voice back with it.
 
 ### 🩹 Fixes that came with it
 
@@ -447,6 +497,6 @@ Your voice is streamed to Google's Gemini Live API while a session is open; that
 Engineered by a developer building a real-world JARVIS-style assistant.
 ⭐ **Star the repository to support.**
 
-| Platform | Link |
+|   GitHub  | Link |
 | --- | --- |
 | Instagram | [@codedroplabs](https://www.instagram.com/codedroplabs) |

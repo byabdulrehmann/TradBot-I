@@ -42,7 +42,7 @@ import time
 import json
 import sys
 import traceback
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 
 import sounddevice as sd
@@ -52,7 +52,7 @@ from google.genai import types
 from ui import JarvisUI
 from memory.memory_manager import (
     load_memory, update_memory, format_memory_for_prompt,
-    save_session_summary, pop_last_session,
+    save_session_summary,
     search_memory, set_trim_notifier,
 )
 
@@ -76,11 +76,12 @@ from actions.trading_monitor import (
     monitoring_check as market_monitor_check,
 )
 from actions.market_notifications import configured_channels, deliver_daily_update
-from actions.web_search        import _news as _fetch_news_sync
 from memory.config_manager     import (
-    get_brief_enabled, get_media_resolution, get_proactive_audio_enabled,
+    get_brief_enabled, get_media_resolution, get_mt5_account_ids,
+    is_first_setup_introduction_pending, mark_first_setup_introduction_sent,
+    get_proactive_audio_enabled, get_trader_profile,
     get_push_to_talk_enabled, get_thinking_enabled, get_turn_tuning, get_voice,
-    get_input_device, get_output_device,
+    get_input_device, get_output_device, load_api_keys, require_gemini_key,
 )
 from core.plugin_loader        import discover_plugins
 from core                      import undo as undo_stack
@@ -101,7 +102,6 @@ def get_base_dir():
     return Path(__file__).resolve().parent
 
 BASE_DIR        = get_base_dir()
-API_CONFIG_PATH = BASE_DIR / "config" / "api_keys.json"
 PROMPT_PATH     = BASE_DIR / "core" / "prompt.txt"
 LIVE_MODEL          = "models/gemini-3.1-flash-live-preview"
 CHANNELS            = 1
@@ -299,8 +299,7 @@ def _render_prompt(template: str, values: dict) -> str:
 
 
 def _get_api_key() -> str:
-    with open(API_CONFIG_PATH, "r", encoding="utf-8") as f:
-        return json.load(f)["gemini_api_key"]
+    return require_gemini_key()
 
 
 def _load_system_prompt() -> str:
@@ -588,6 +587,7 @@ class JarvisLive:
         self.ui.on_remote_clicked = self._make_remote_key
         self.ui.on_interrupt      = self.interrupt
         self.ui.on_voice_change   = self._on_voice_change     # voice picker → rebuild session
+        self.ui.on_trading_settings_change = self._on_trading_settings_change
         self.ui.on_audio_device_change = self._on_audio_device_change
         self._reconnect_event: asyncio.Event | None = None
         self._reconnect_keep = True   # False → next rebuild drops the resumption handle
@@ -603,20 +603,23 @@ class JarvisLive:
         # Deliberately in RAM only, never written to disk. Persisting it would
         # make a fresh launch continue yesterday's conversation, which sounds
         # appealing but breaks the session-summary flow: _save_session_summary
-        # runs at shutdown and the morning briefing pops it the next day. A
-        # conversation that never ends never produces a summary, and the
-        # "yesterday we talked about…" line silently disappears.
+        # runs at shutdown and the next fresh launch begins with a short greeting,
+        # not a continuation of yesterday's conversation. A conversation that
+        # never ends never produces a summary.
         self._resume_handle: str | None = None
         self._turn_done_event: asyncio.Event | None = None
         self._dashboard     = None
-        self._briefing_sent    = False          # morning briefing fires once per process
+        self._startup_greeting_sent = False
+        self._startup_intro_sent = False
         self._sys_monitor      = SystemMonitor()  # persistent cooldown state
         self._proactive        = ProactiveEngine()
         self._last_user_speech = time.monotonic()  # updated on every user utterance
         self._session_log: list[str] = []          # conversation turns for end-of-session summary
         self._market_alert_queue: list[str] = []
         self._market_monitor_error = ""
+        self._journal_error = ""
         self._last_daily_market_update = ""
+        self._daily_checkin_prompted_date = ""
         self._trading_screen_watch_enabled = True
         self._last_tradingview_frame: tuple[bytes, str] | None = None
         self._last_tradingview_observation = ""
@@ -792,6 +795,30 @@ class JarvisLive:
         voice is a deliberate, rare act; losing it on a dropped packet was not."""
         self.request_reconnect(keep_context=False, reason="new voice")
 
+    def _on_trading_settings_change(self):
+        """Rebuild the session so its coaching profile matches saved settings."""
+        self.request_reconnect(keep_context=False, reason="trading settings updated")
+
+    def _queue_market_alert(self, message: str, *, trade_checkin: bool = False) -> None:
+        queue = self._market_alert_queue
+        if len(queue) >= 100:
+            disposable = next(
+                (
+                    index for index, queued in enumerate(queue)
+                    if not queued.startswith("[TRADER_CHECK_IN]")
+                ),
+                None,
+            )
+            if disposable is not None:
+                queue.pop(disposable)
+            elif not trade_checkin:
+                return
+            else:
+                self.ui.write_log(
+                    "WARN: Trade follow-up queue is busy; preserving this trade check-in."
+                )
+        queue.append(message)
+
     def _on_audio_device_change(self):
         """Microphone or speaker changed. Both streams are opened inside the
         session TaskGroup, so they can only be re-opened by rebuilding it —
@@ -952,7 +979,7 @@ class JarvisLive:
 
         # Load customization from config
         try:
-            _cfg = json.loads(open(API_CONFIG_PATH, encoding="utf-8").read())
+            _cfg = load_api_keys()
             self._asst_name = (_cfg.get("assistant_name") or "JARVIS").strip()
             _user_name = (_cfg.get("user_name") or "").strip()
         except Exception:
@@ -1012,6 +1039,82 @@ class JarvisLive:
         })
 
         parts = [time_ctx, identity_ctx]
+        trader_profile = get_trader_profile()
+        if trader_profile.get("strategy"):
+            parts.append(
+                "[TRADER COACHING PROFILE]\n"
+                f"{json.dumps(trader_profile, ensure_ascii=False)}\n"
+                "You are the user's personal trading assistant. Startup greetings "
+                "must stay brief and use only the exact greeting requested by the "
+                "startup instruction; do not repeat your role, features, prior-session "
+                "summaries, or news. The user can change their plan and accounts in "
+                "Settings → Trading Settings. "
+                "Use these trader-defined limits as context, not as instructions to trade. "
+                "When the user asks to check a planned setup, guide a short pre-trade "
+                "check-in one question at a time: setup rationale, invalidation/stop, "
+                "planned risk versus their stated cap, and whether their current state "
+                "supports following their own plan. Do not approve entries, recommend "
+                "long/short, predict price, prescribe position size, or infer emotions. "
+                "After a detected MT5 open/close, ask one neutral reflection question "
+                "and let the trader answer. After the answer, record the position "
+                "outcome and only explicitly self-reported details with "
+                "trading_coach(action=record_reflection), including the MT5 ticket "
+                "and account_id from the event when available. Review stored history "
+                "across all configured accounts when requested. This is "
+                "decision support, not therapy or "
+                "financial advice.\n\n"
+            )
+        try:
+            from memory.trading_journal import (
+                get_recent_daily_checkins,
+                history_summary,
+            )
+
+            trading_memory = []
+            for account_id in get_mt5_account_ids():
+                summary = history_summary(account_id=account_id, days=365)
+                if summary["trade_count"] or summary["reflections"]:
+                    trading_memory.append({
+                        "account_id": account_id,
+                        "closed_trade_count": summary["trade_count"],
+                        "wins": summary["wins"],
+                        "losses": summary["losses"],
+                        "net_result": summary["net"],
+                        "profit_factor": summary["profit_factor"],
+                        "consecutive_losses": summary["consecutive_losses"],
+                        "rapid_reentries_after_loss": summary["rapid_reentries_after_loss"],
+                        "recent_self_reported_reflections": [
+                            {
+                                "symbol": item["symbol"],
+                                "setup": item["setup"],
+                                "emotional_state": item["emotional_state"],
+                                "plan_adherence": item["plan_adherence"],
+                                "lesson": item["lesson"],
+                            }
+                            for item in summary["reflections"][:5]
+                        ],
+                    })
+            daily_checkins = get_recent_daily_checkins(limit=7)
+            if daily_checkins:
+                parts.append(
+                    "[TRADER DAILY CHECK-INS — SELF-REPORTED]\n"
+                    f"{json.dumps(daily_checkins, ensure_ascii=False)}\n"
+                    "These are the trader's own reports, not objective measurements. "
+                    "Use them only as context for their stated plan and risk limits. "
+                    "Never diagnose, infer an unreported emotion, or predict trading "
+                    "performance from mood or confidence.\n\n"
+                )
+            if trading_memory:
+                parts.append(
+                    "[TRADING MEMORY — LOCAL JOURNAL]\n"
+                    f"{json.dumps(trading_memory, ensure_ascii=False)}\n"
+                    "Use this account-specific history and the trader's own recorded "
+                    "reflections as context when coaching. Distinguish observed outcomes "
+                    "from self-reported reflections; do not infer emotions or promise "
+                    "that a past pattern predicts the next trade.\n\n"
+                )
+        except Exception as exc:
+            print(f"[TradeJournal] Could not load coaching memory: {exc}")
         if mem_str:
             parts.append(mem_str)
         parts.append(sys_prompt)
@@ -1288,7 +1391,7 @@ class JarvisLive:
             await self.session.send_realtime_input(
                 audio=types.Blob(
                     data=msg["data"],
-                    mime_type=msg.get("mime_type", "audio/pcm"),
+                    mime_type=msg.get("mime_type", "audio/pcm;rate=16000"),
                 )
             )
 
@@ -1360,7 +1463,7 @@ class JarvisLive:
                 data = indata.tobytes()
                 loop.call_soon_threadsafe(
                     self.out_queue.put_nowait,
-                    {"data": data, "mime_type": "audio/pcm"}
+                    {"data": data, "mime_type": "audio/pcm;rate=16000"}
                 )
                 # Feed the live mic level to the HUD so the waveform reacts to
                 # the user's actual voice while listening. Purely cosmetic — any
@@ -1719,141 +1822,29 @@ class JarvisLive:
             stream.stop()
             stream.close()
 
-    # ── Morning briefing ────────────────────────────────────────────────────────
+    # ── Startup greeting ────────────────────────────────────────────────────────
 
-    async def _send_startup_briefing(self) -> None:
-        """
-        Two-phase briefing optimized for speed:
-          Phase 1 — instant greeting (no tools) → speech starts in <1s
-          Phase 2 — news pre-fetched in a background thread while Phase 1 plays,
-                    delivered as ready text (no Gemini tool-call round-trip) and
-                    shown on the UI content panel. Waits for turn_complete event
-                    instead of a fixed sleep so there is no unnecessary gap.
-        """
-        memory   = load_memory()
-        identity = memory.get("identity", {})
+    async def _send_startup_introduction(self) -> None:
+        await self._send_startup_greeting()
+        if self.session:
+            mark_first_setup_introduction_sent()
 
-        def _val(k: str) -> str:
-            e = identity.get(k, {})
-            return (e.get("value", "") if isinstance(e, dict) else str(e)).strip()
-
-        lang = _val("language")
-        name = _val("name")
-        time_str = datetime.now().strftime("%H:%M")
-
-        # Start fetching news immediately — runs in parallel while phase 1 plays
-        loop = asyncio.get_event_loop()
-        news_future = loop.run_in_executor(None, _fetch_news_sync, "top world news today")
-
+    async def _send_startup_greeting(self) -> None:
+        """Speak only a short date-aware greeting, without repeating a briefing."""
         await asyncio.sleep(0.3)
         if not self.session:
             return
-
-        # ── Phase 1: instant greeting ─────────────────────────────────────────
-        # The briefing fires before the user has said anything, so the
-        # remembered language is the only signal there is. It is a starting
-        # point, not a setting: the moment they reply, their language wins.
-        lang_clause = (f" Speak this greeting in {lang}, then follow the "
-                       f"user's own language from their first reply onward."
-                       if lang else "")
-        name_clause = f" Address the user as {name}." if name else ""
-
-        # Inject last session context if available — pop removes it so it's never repeated
-        last = await asyncio.to_thread(pop_last_session)
-        session_clause = ""
-        if last:
-            try:
-                _delta = (datetime.now() - datetime.strptime(last["date"], "%Y-%m-%d")).days
-                _when  = "earlier today" if _delta == 0 else ("yesterday" if _delta == 1 else f"{_delta} days ago")
-            except Exception:
-                _when = "last time"
-            session_clause = (
-                f" Also briefly and naturally mention that {_when}: {last['summary']}"
-            )
-
-        p1 = (
-            f"Greet the user warmly, mention it is {time_str}, and say you are fetching today's news now.{session_clause} "
-            f"Keep it to 2 short sentences max. Do not call any tools.{lang_clause}{name_clause}"
+        weekday = date.today().strftime("%A")
+        greeting = (
+            f"Say exactly: 'Hi, sir. I'm JARVIS. Today is {weekday}. "
+            "What are we going to work on today?' Do not add an introduction, "
+            "news update, previous-session summary, or any other details. "
+            "Do not call tools."
         )
-
-        # Clear the turn-done event so we can wait for Phase 1 to finish
-        if self._turn_done_event:
-            self._turn_done_event.clear()
-
         await self.session.send_client_content(
-            turns={"role": "user", "parts": [{"text": p1}]},
+            turns={"role": "user", "parts": [{"text": greeting}]},
             turn_complete=True,
         )
-        print("[JARVIS] Briefing phase 1 (greeting) sent.")
-
-        # ── Phase 2: fire as soon as Phase 1 audio is done ───────────────────
-        async def _deliver_news():
-            try:
-                lang_str = (f" Speak in {lang} unless the user has since "
-                            f"spoken another language, in which case use theirs."
-                            if lang else "")
-
-                # Wait for news fetch (already running) and Phase 1 turn-complete
-                # in parallel — whichever takes longer determines the wait time
-                news_done   = asyncio.wrap_future(news_future)
-                turn_waited = False
-                if self._turn_done_event:
-                    try:
-                        await asyncio.wait_for(self._turn_done_event.wait(), timeout=6.0)
-                        turn_waited = True
-                    except asyncio.TimeoutError:
-                        pass
-
-                # Extra buffer: turn_complete fires when Gemini finishes *generating*
-                # Phase 1, but audio may still be playing.  Waiting a beat here
-                # prevents Phase 2 audio from arriving while Phase 1 is mid-sentence
-                # (which sounds like a "repeated first response" to the user).
-                if turn_waited:
-                    await asyncio.sleep(0.8)
-                else:
-                    await asyncio.sleep(1.0)
-
-                try:
-                    news_text = await asyncio.wait_for(news_done, timeout=8.0)
-                except Exception as e:
-                    self.ui.write_log(f"SYS: News fetch timed out/failed: {e!r}")
-                    news_text = ""
-
-                if not self.session:
-                    return
-
-                failed = (not news_text) or news_text.startswith(
-                    ("No news found", "Search failed", "Please provide")
-                )
-                if not failed:
-                    # Show on UI content panel immediately
-                    self.ui.show_content("NEWS — top world news today", news_text)
-
-                    p2 = (
-                        f"[BRIEFING] Here are today's top news headlines:\n{news_text}\n\n"
-                        "Pick ONE headline, summarise it in one sentence, then say the full list "
-                        f"is displayed on screen. Do not call any tools.{lang_str}"
-                    )
-                else:
-                    self.ui.write_log(
-                        f"SYS: News unavailable — backend returned: {news_text[:120]!r}"
-                    )
-                    p2 = (
-                        "News headlines could not be fetched right now. "
-                        f"Let the user know briefly.{lang_str}"
-                    )
-
-                await self.session.send_client_content(
-                    turns={"role": "user", "parts": [{"text": p2}]},
-                    turn_complete=True,
-                )
-                print("[JARVIS] Briefing phase 2 (news) sent.")
-            except Exception as e:
-                print(f"[Briefing] Phase 2 error: {e}")
-                print(f"[JARVIS] Briefing phase 2 failed: {e}")
-                self.ui.write_log("SYS: Could not fetch the news for the briefing.")
-
-        asyncio.create_task(_deliver_news())
 
     # ── Session memory ──────────────────────────────────────────────────────────
 
@@ -1955,14 +1946,46 @@ class JarvisLive:
             elif not error and self._market_monitor_error:
                 print("[MarketMonitor] MT5 data connection restored.")
             self._market_monitor_error = error
-            snapshot = result.get("snapshot")
             markets = result.get("markets", [])
             self.ui.update_market_prices(markets)
 
+            journal_error = result.get("journal_error", "")
+            if journal_error and journal_error != self._journal_error:
+                self.ui.write_log(f"ERR: MT5 trade journal sync failed: {journal_error}")
+            elif not journal_error and self._journal_error:
+                self.ui.write_log("SYS: MT5 trade journal sync restored.")
+            self._journal_error = journal_error
+
+            for event in result.get("trade_events", []):
+                if event["event"] == "opened":
+                    checkin = (
+                        f"[TRADER_CHECK_IN] New MT5 position detected: "
+                        f"{event['symbol']} {event['side']}, {event['volume']:.2f} lots. "
+                        f"MT5 position ticket: {event['ticket']}; account_id: "
+                        f"{event.get('account_id', '')}. "
+                        "Use the trader's stated strategy and risk limits as context. "
+                        "Ask one brief, neutral question about the setup and planned risk. "
+                        "Do not tell the trader to open, close, or modify the position."
+                    )
+                else:
+                    result_text = f"{event['net']:+.2f}"
+                    checkin = (
+                        f"[TRADER_CHECK_IN] MT5 recorded a closed {event['symbol']} "
+                        f"{event['side']} position; recorded result {result_text}. "
+                        f"MT5 position ticket: {event['ticket']}; account_id: "
+                        f"{event.get('account_id', '')}. "
+                        "Review this individual trade using only available MT5 facts, "
+                        "the trader's stated strategy and limits, and explicitly "
+                        "self-reported journal notes. State when the available facts "
+                        "cannot establish whether the entry followed the plan; a win or "
+                        "loss alone does not prove trade quality. Give one concise, "
+                        "neutral observation and ask one question about plan adherence "
+                        "or a lesson. Do not infer emotions or give trading instructions."
+                    )
+                self._queue_market_alert(checkin, trade_checkin=True)
+
             for alert in result.get("alerts", []):
-                if len(self._market_alert_queue) >= 20:
-                    self._market_alert_queue.pop(0)
-                self._market_alert_queue.append(alert)
+                self._queue_market_alert(alert)
                 print(f"[MarketMonitor] Alert queued: {alert}")
 
             if not self._market_alert_queue or not self.session or not self._awake:
@@ -1974,12 +1997,21 @@ class JarvisLive:
 
             alert = self._market_alert_queue.pop(0)
             try:
-                await self.session.send_client_content(
-                    turns={"role": "user", "parts": [{"text": (
+                if alert.startswith("[TRADER_CHECK_IN]"):
+                    user_message = (
+                        f"{alert}\n\n"
+                        "Deliver one concise question in the user's language. "
+                        "Ask only one question and wait for the answer; do not "
+                        "infer psychology from the MT5 data."
+                    )
+                else:
+                    user_message = (
                         f"[MARKET_ALERT] {alert}\n\n"
                         "Report this briefly and neutrally in the user's language. "
                         "State the observed data, do not infer emotion or recommend a trade."
-                    )}]},
+                    )
+                await self.session.send_client_content(
+                    turns={"role": "user", "parts": [{"text": user_message}]},
                     turn_complete=True,
                 )
             except Exception as exc:
@@ -2014,6 +2046,72 @@ class JarvisLive:
                 self.ui.write_log(f"SYS: Daily market update ({report_date}) — {delivered}.")
             except Exception as exc:
                 print(f"[MarketMonitor] Daily update failed: {exc}")
+
+    async def _run_daily_trader_checkin(self) -> None:
+        """Ask and locally remember one self-reported trading check-in per day."""
+        from memory.trading_journal import get_daily_checkin
+
+        await asyncio.sleep(30)
+        while True:
+            await asyncio.sleep(30)
+            if not self.session or not self._awake:
+                continue
+
+            checkin_date = date.today().isoformat()
+            if self._daily_checkin_prompted_date == checkin_date:
+                continue
+            saved = await asyncio.to_thread(get_daily_checkin, checkin_date)
+            if saved and saved["complete"]:
+                self._daily_checkin_prompted_date = checkin_date
+                continue
+
+            with self._speaking_lock:
+                speaking = self._is_speaking
+            if speaking or time.monotonic() - self._last_user_speech < 20:
+                continue
+
+            known_answers = saved["answers"] if saved else {}
+            self._daily_checkin_prompted_date = checkin_date
+            prompt = (
+                "[DAILY TRADER CHECK-IN]\n"
+                f"Start today's personal check-in for local date {checkin_date}. "
+                "Ask exactly one question, then stop speaking and wait for the "
+                "trader's answer before asking the next. Ask the following in order, "
+                "skipping only questions whose answer is already present in the "
+                "saved answers below:\n"
+                "1. trading_mood: How is your mood about trading today?\n"
+                "2. market_bias: What is your view of today's market, and what is "
+                "that view based on?\n"
+                "3. intended_direction: Are you looking for buys, sells, or waiting "
+                "for a setup? Which instrument, if any?\n"
+                "4. outside_mood: How are you feeling outside of trading today?\n"
+                "5. confidence: Would you describe your trading confidence as "
+                "underconfident, overconfident, steady, low, or something else?\n"
+                "6. readiness: How rested and focused do you feel for trading today?\n"
+                "7. stand_aside_conditions: What would make you stand aside today?\n"
+                "8. risk_commitment: Which part of your own risk plan or daily limit "
+                "do you want to be especially careful to follow?\n"
+                "After each answer, call trading_coach with action="
+                "record_daily_checkin, this checkin_date, and all explicitly "
+                "answered fields in the answers object so far. Use these exact field "
+                "names; do not fill in answers the trader did not give. Treat an "
+                "explicit 'prefer not to say' as their answer. Once all eight answers "
+                "are saved, thank them briefly and stop the questionnaire. Be warm "
+                "and neutral; do not judge the trader, infer their mood, recommend "
+                "buy/sell, or claim their mood predicts how they will perform. "
+                "Their answers are private self-reports for reflecting against their "
+                "own plan, not a diagnosis or a performance forecast.\n"
+                f"Saved answers so far: {json.dumps(known_answers, ensure_ascii=False)}"
+            )
+            try:
+                await self.session.send_client_content(
+                    turns={"role": "user", "parts": [{"text": prompt}]},
+                    turn_complete=True,
+                )
+                self.ui.write_log("SYS: Today's trader mood check-in has started.")
+            except Exception as exc:
+                self._daily_checkin_prompted_date = ""
+                print(f"[TraderCheckIn] Could not start daily check-in: {exc}")
 
     async def _run_tradingview_screen_monitor(self) -> None:
         """Compare foreground TradingView window frames without entering the audio turn."""
@@ -2065,9 +2163,7 @@ class JarvisLive:
                 f"{behavior}. Verify it against your MT5 account; a screenshot "
                 "cannot confirm order execution or emotional intent."
             )
-            if len(self._market_alert_queue) >= 20:
-                self._market_alert_queue.pop(0)
-            self._market_alert_queue.append(message)
+            self._queue_market_alert(message)
             self.ui.write_log("SYS: A high-confidence TradingView screen observation is queued.")
 
     # ── Proactive mode ──────────────────────────────────────────────────────────
@@ -2263,17 +2359,31 @@ class JarvisLive:
                     tg.create_task(self._run_background_monitor())
                     tg.create_task(self._run_market_intelligence())
                     tg.create_task(self._run_daily_market_updates())
+                    tg.create_task(self._run_daily_trader_checkin())
                     tg.create_task(self._run_tradingview_screen_monitor())
                     tg.create_task(self._run_proactive_mode())
                     if self._dashboard:
                         tg.create_task(self._relay_phone_audio())
 
-                    # Morning briefing — fires once per process launch (if enabled).
-                    # Skipped in wake-word mode: it comes up asleep, and a briefing
-                    # would mean talking while "asleep".
-                    if not self._briefing_sent and get_brief_enabled() and self._awake:
-                        self._briefing_sent = True
-                        tg.create_task(self._send_startup_briefing())
+                    # Keep first setup bookkeeping, but use the same concise
+                    # greeting as every subsequent launch.
+                    if (
+                        not self._startup_intro_sent
+                        and self._awake
+                        and is_first_setup_introduction_pending()
+                    ):
+                        self._startup_intro_sent = True
+                        self._startup_greeting_sent = True
+                        tg.create_task(self._send_startup_introduction())
+                    # The startup greeting fires once per launch when enabled.
+                    elif (
+                        not self._startup_greeting_sent
+                        and get_brief_enabled()
+                        and self._awake
+                    ):
+                        self._startup_greeting_sent = True
+                        tg.create_task(self._send_startup_greeting())
+                        self._startup_intro_sent = True
 
             except KeyboardInterrupt:
                 raise

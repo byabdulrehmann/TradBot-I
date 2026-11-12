@@ -1004,25 +1004,40 @@ class LogWidget(QTextEdit):
         # without bound — keeps memory flat and every insert cheap. Oldest
         # lines drop off the top automatically.
         self.document().setMaximumBlockCount(600)
-        self.setFont(QFont(UI_FONT_FAMILY, 9))
+        self.setFont(QFont(MARKET_FONT_FAMILY, 9))
         self.setStyleSheet(f"""
             QTextEdit {{
-                background: {C.PANEL};
+                background: rgba(0, 13, 20, 218);
                 color: {C.TEXT};
                 border: 1px solid {C.BORDER};
-                border-radius: 4px;
-                padding: 6px;
+                border-top: 2px solid {C.PRI_DIM};
+                border-radius: 8px;
+                padding: 10px;
                 selection-background-color: {C.PRI_GHO};
             }}
+            QTextEdit:focus {{
+                border: 1px solid {C.PRI};
+                border-top: 2px solid {C.PRI};
+            }}
             QScrollBar:vertical {{
-                background: {C.BG};
-                width: 8px;
+                background: transparent;
+                width: 9px;
                 border: none;
+                margin: 4px 2px 4px 0;
             }}
             QScrollBar::handle:vertical {{
                 background: {C.BORDER_B};
                 border-radius: 4px;
                 min-height: 20px;
+            }}
+            QScrollBar::handle:vertical:hover {{
+                background: {C.PRI_DIM};
+            }}
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
+                height: 0;
+            }}
+            QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{
+                background: transparent;
             }}
         """)
         self._queue: list[str] = []
@@ -1384,7 +1399,7 @@ class _CameraPreview(QWidget):
 
 
 class SetupOverlay(QWidget):
-    done = pyqtSignal(str, str)
+    done = pyqtSignal(dict, str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -1402,9 +1417,14 @@ class SetupOverlay(QWidget):
         )
         self._sel_os = detected
 
+        from memory.config_manager import get_gemini_key, load_api_keys
+
+        config = load_api_keys()
+        profile = config.get("trader_profile", {})
+        profile = profile if isinstance(profile, dict) else {}
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(30, 22, 30, 22)
-        layout.setSpacing(8)
+        layout.setContentsMargins(22, 14, 22, 14)
+        layout.setSpacing(6)
 
         def _lbl(txt, font_size=9, bold=False, color=C.PRI,
                  align=Qt.AlignmentFlag.AlignCenter):
@@ -1416,39 +1436,121 @@ class SetupOverlay(QWidget):
             return w
 
         layout.addWidget(_lbl("◈  INITIALISATION REQUIRED", 13, True))
-        layout.addWidget(_lbl("Configure J.A.R.V.I.S. before first boot.", 9, color=C.PRI_DIM))
-        layout.addSpacing(6)
+        layout.addWidget(_lbl(
+            "Set your own trading guardrails. JARVIS observes patterns; it does not diagnose or place trades.",
+            8, color=C.PRI_DIM,
+        ))
 
-        sep = QFrame(); sep.setFrameShape(QFrame.Shape.HLine)
-        sep.setStyleSheet(f"color: {C.BORDER};"); layout.addWidget(sep)
-        layout.addSpacing(4)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setStyleSheet("QScrollArea { background: transparent; }")
+        form = QWidget()
+        form.setStyleSheet("background: transparent;")
+        form_layout = QVBoxLayout(form)
+        form_layout.setContentsMargins(2, 4, 8, 4)
+        form_layout.setSpacing(6)
+        scroll.setWidget(form)
+        layout.addWidget(scroll, stretch=1)
 
-        layout.addWidget(_lbl("GEMINI API KEY", 8, color=C.TEXT_DIM,
-                               align=Qt.AlignmentFlag.AlignLeft))
-        self._key_input = QLineEdit()
-        self._key_input.setEchoMode(QLineEdit.EchoMode.Password)
-        self._key_input.setPlaceholderText("AIza…")
-        self._key_input.setFont(QFont(UI_FONT_FAMILY, 10))
-        self._key_input.setFixedHeight(32)
-        self._key_input.setStyleSheet(f"""
-            QLineEdit {{
-                background: #000d12; color: {C.TEXT};
-                border: 1px solid {C.BORDER}; border-radius: 3px; padding: 4px 8px;
-            }}
-            QLineEdit:focus {{ border: 1px solid {C.PRI}; }}
-        """)
-        layout.addWidget(self._key_input)
-        layout.addSpacing(12)
+        def _section(text):
+            form_layout.addWidget(_lbl(text, 8, True, C.TEXT_MED,
+                                       Qt.AlignmentFlag.AlignLeft))
 
-        sep2 = QFrame(); sep2.setFrameShape(QFrame.Shape.HLine)
-        sep2.setStyleSheet(f"color: {C.BORDER};"); layout.addWidget(sep2)
-        layout.addSpacing(4)
+        def _input(placeholder="", text="", password=False):
+            field = QLineEdit(str(text or ""))
+            field.setEchoMode(
+                QLineEdit.EchoMode.Password if password else QLineEdit.EchoMode.Normal
+            )
+            field.setPlaceholderText(placeholder)
+            field.setFont(QFont(UI_FONT_FAMILY, 9))
+            field.setFixedHeight(29)
+            field.setStyleSheet(f"""
+                QLineEdit {{
+                    background: #000d12; color: {C.TEXT};
+                    border: 1px solid {C.BORDER}; border-radius: 3px; padding: 3px 7px;
+                }}
+                QLineEdit:focus {{ border: 1px solid {C.PRI}; }}
+            """)
+            return field
 
-        layout.addWidget(_lbl("OPERATING SYSTEM", 8, color=C.TEXT_DIM,
-                               align=Qt.AlignmentFlag.AlignLeft))
+        def _field(label, placeholder="", text="", password=False):
+            column = QVBoxLayout()
+            column.setSpacing(2)
+            column.addWidget(_lbl(label, 7, color=C.TEXT_DIM,
+                                  align=Qt.AlignmentFlag.AlignLeft))
+            field = _input(placeholder, text, password)
+            column.addWidget(field)
+            return column, field
+
+        def _field_row(fields):
+            row = QHBoxLayout()
+            row.setSpacing(10)
+            for field in fields:
+                column, _ = field
+                row.addLayout(column, stretch=1)
+            form_layout.addLayout(row)
+
+        _section("GEMINI")
+        gemini_column, self._key_input = _field(
+            "API KEY", "Paste your Gemini API key", password=True
+        )
+        try:
+            self._key_input.setText(get_gemini_key() or "")
+        except Exception:
+            pass
+        form_layout.addLayout(gemini_column)
+
+        _section("METATRADER 5 · INVESTOR ACCESS")
+        form_layout.addWidget(_lbl(
+            "Optional. Use the broker-issued investor/read-only password, never your trading password. "
+            "Leave all fields blank to continue without MT5.",
+            7, color=C.TEXT_DIM, align=Qt.AlignmentFlag.AlignLeft,
+        ))
+        login_col, self._mt5_login = _field(
+            "ACCOUNT NUMBER", "Digits only", config.get("mt5_login", "")
+        )
+        server_col, self._mt5_server = _field(
+            "BROKER SERVER", "Exact server name", config.get("mt5_server", "")
+        )
+        _field_row(((login_col, self._mt5_login), (server_col, self._mt5_server)))
+        password_col, self._mt5_password = _field(
+            "INVESTOR PASSWORD", "Read-only password", password=True
+        )
+        form_layout.addLayout(password_col)
+
+        _section("YOUR TRADING PLAN")
+        form_layout.addWidget(_lbl(
+            "These limits are your inputs, not recommendations. Update them later in Settings → Trading Settings.",
+            7, color=C.TEXT_DIM, align=Qt.AlignmentFlag.AlignLeft,
+        ))
+        strategy_col, self._strategy = _field(
+            "STYLE / SETUP", "e.g. intraday breakout", profile.get("strategy", "")
+        )
+        markets_col, self._markets = _field(
+            "MARKETS / SESSION", "e.g. XAUUSD, London", profile.get("markets_session", "")
+        )
+        _field_row(((strategy_col, self._strategy), (markets_col, self._markets)))
+        risk_col, self._risk = _field(
+            "MAX RISK PER TRADE (%)", "e.g. 1.0", profile.get("risk_per_trade_pct", "")
+        )
+        daily_col, self._daily_loss = _field(
+            "DAILY LOSS LIMIT (%)", "e.g. 3.0", profile.get("daily_loss_limit_pct", "")
+        )
+        _field_row(((risk_col, self._risk), (daily_col, self._daily_loss)))
+        trades_col, self._max_trades = _field(
+            "MAX TRADES PER DAY", "e.g. 5", profile.get("max_trades_per_day", "")
+        )
+        challenge_col, self._challenge = _field(
+            "COMMON CHALLENGE", "e.g. chasing after a loss",
+            profile.get("common_challenge", ""),
+        )
+        _field_row(((trades_col, self._max_trades), (challenge_col, self._challenge)))
+
+        _section("OPERATING SYSTEM")
         det_name = {"windows": "Windows", "mac": "macOS", "linux": "Linux"}[detected]
-        layout.addWidget(_lbl(f"Auto-detected: {det_name}", 8, color=C.ACC2,
-                               align=Qt.AlignmentFlag.AlignLeft))
+        form_layout.addWidget(_lbl(f"Auto-detected: {det_name}", 7, color=C.ACC2,
+                                   align=Qt.AlignmentFlag.AlignLeft))
 
         os_row = QHBoxLayout(); os_row.setSpacing(6)
         self._os_btns: dict[str, QPushButton] = {}
@@ -1460,13 +1562,15 @@ class SetupOverlay(QWidget):
             btn.clicked.connect(lambda _, k=key: self._sel(k))
             os_row.addWidget(btn)
             self._os_btns[key] = btn
-        layout.addLayout(os_row)
+        form_layout.addLayout(os_row)
         self._sel(detected)
-        layout.addSpacing(12)
 
+        self._error_lbl = _lbl("", 8, color=C.RED,
+                               align=Qt.AlignmentFlag.AlignLeft)
+        layout.addWidget(self._error_lbl)
         init_btn = QPushButton("▸  INITIALISE SYSTEMS")
         init_btn.setFont(QFont(UI_FONT_FAMILY, 10, QFont.Weight.Bold))
-        init_btn.setFixedHeight(36)
+        init_btn.setFixedHeight(34)
         init_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         init_btn.setStyleSheet(f"""
             QPushButton {{
@@ -1504,12 +1608,416 @@ class SetupOverlay(QWidget):
     def _submit(self):
         key = self._key_input.text().strip()
         if not key:
-            self._key_input.setStyleSheet(
-                self._key_input.styleSheet() +
-                f" QLineEdit {{ border: 1px solid {C.RED}; }}"
+            self._error_lbl.setText("Enter the Gemini API key to continue.")
+            return
+        mt5_values = (
+            self._mt5_login.text().strip(),
+            self._mt5_server.text().strip(),
+            self._mt5_password.text(),
+        )
+        if any(mt5_values) and not all(mt5_values):
+            self._error_lbl.setText(
+                "For MT5, enter the account number, server, and investor password together."
             )
             return
-        self.done.emit(key, self._sel_os)
+        strategy = self._strategy.text().strip()
+        if not strategy:
+            self._error_lbl.setText("Describe your trading style or primary setup.")
+            return
+        try:
+            risk = float(self._risk.text().strip())
+            daily_loss = float(self._daily_loss.text().strip())
+            max_trades = int(self._max_trades.text().strip())
+        except ValueError:
+            self._error_lbl.setText(
+                "Enter numeric values for risk, daily loss limit, and trades per day."
+            )
+            return
+        if not 0 < risk <= 10 or not risk <= daily_loss <= 100 or not 1 <= max_trades <= 100:
+            self._error_lbl.setText(
+                "Use risk from 0.01–10%, a daily limit at least as high as per-trade risk "
+                "and no more than 100%, and 1–100 trades per day."
+            )
+            return
+        setup = {
+            "gemini_api_key": key,
+            "mt5_login": mt5_values[0],
+            "mt5_server": mt5_values[1],
+            "mt5_investor_password": mt5_values[2],
+            "trader_profile": {
+                "strategy": strategy[:180],
+                "markets_session": self._markets.text().strip()[:180],
+                "risk_per_trade_pct": risk,
+                "daily_loss_limit_pct": daily_loss,
+                "max_trades_per_day": max_trades,
+                "common_challenge": self._challenge.text().strip()[:180],
+            },
+        }
+        self.done.emit(setup, self._sel_os)
+
+
+class TradingSettingsOverlay(QWidget):
+    """Edit the trader plan, read-only accounts, and provider key after setup."""
+
+    saved = pyqtSignal(dict)
+    _OW, _OH = 650, 660
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setStyleSheet(f"""
+            TradingSettingsOverlay {{
+                background: rgba(0, 6, 10, 246);
+                border: 1px solid {C.BORDER_B};
+                border-radius: 6px;
+            }}
+        """)
+        from memory.config_manager import (
+            get_mt5_accounts, get_trader_profile, get_watch_symbols, load_api_keys,
+        )
+
+        profile = get_trader_profile()
+        config = load_api_keys()
+        self._accounts: list[dict[str, QLineEdit]] = []
+        self._symbol_rows: list[tuple[QWidget, QLineEdit]] = []
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(20, 14, 20, 14)
+        layout.setSpacing(6)
+
+        def label(text, size=8, bold=False, color=C.TEXT_DIM):
+            item = QLabel(text)
+            item.setFont(QFont(UI_FONT_FAMILY, size,
+                               QFont.Weight.Bold if bold else QFont.Weight.Normal))
+            item.setStyleSheet(f"color: {color}; background: transparent;")
+            item.setWordWrap(True)
+            return item
+
+        layout.addWidget(label("⚙  TRADING SETTINGS", 12, True, C.PRI))
+        layout.addWidget(label(
+            "Update your coaching plan and read-only account access. "
+            "Your limits are your own inputs; JARVIS never places or changes trades.",
+            8,
+        ))
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setStyleSheet("QScrollArea { background: transparent; }")
+        form = QWidget()
+        form.setStyleSheet("background: transparent;")
+        form_layout = QVBoxLayout(form)
+        form_layout.setContentsMargins(2, 4, 8, 4)
+        form_layout.setSpacing(7)
+        scroll.setWidget(form)
+        layout.addWidget(scroll, stretch=1)
+
+        edit_style = f"""
+            QLineEdit {{
+                background: #000d12; color: {C.TEXT};
+                border: 1px solid {C.BORDER}; border-radius: 3px; padding: 4px 7px;
+            }}
+            QLineEdit:focus {{ border: 1px solid {C.PRI}; }}
+        """
+
+        def section(text):
+            form_layout.addWidget(label(text, 8, True, C.TEXT_MED))
+
+        def field(title, value="", placeholder=""):
+            col = QVBoxLayout()
+            col.setSpacing(2)
+            col.addWidget(label(title, 7))
+            edit = QLineEdit(str(value or ""))
+            edit.setPlaceholderText(placeholder)
+            edit.setFont(QFont(UI_FONT_FAMILY, 9))
+            edit.setFixedHeight(29)
+            edit.setStyleSheet(edit_style)
+            col.addWidget(edit)
+            return col, edit
+
+        def row(*fields):
+            box = QHBoxLayout()
+            box.setSpacing(10)
+            for item in fields:
+                box.addLayout(item[0], stretch=1)
+            form_layout.addLayout(box)
+
+        section("TRADING PLAN")
+        strategy_col, self._strategy = field(
+            "STRATEGY / SETUP", profile.get("strategy"), "e.g. intraday breakout"
+        )
+        market_col, self._markets = field(
+            "MARKETS / SESSION", profile.get("markets_session"), "e.g. XAUUSD, London"
+        )
+        row((strategy_col, self._strategy), (market_col, self._markets))
+        risk_col, self._risk = field(
+            "MAX RISK PER TRADE (%)", profile.get("risk_per_trade_pct"), "e.g. 1.0"
+        )
+        loss_col, self._daily_loss = field(
+            "DAILY LOSS LIMIT (%)", profile.get("daily_loss_limit_pct"), "e.g. 3.0"
+        )
+        row((risk_col, self._risk), (loss_col, self._daily_loss))
+        trades_col, self._max_trades = field(
+            "MAX TRADES PER DAY", profile.get("max_trades_per_day"), "e.g. 5"
+        )
+        challenge_col, self._challenge = field(
+            "COMMON CHALLENGE", profile.get("common_challenge"), "e.g. chasing after a loss"
+        )
+        row((trades_col, self._max_trades), (challenge_col, self._challenge))
+
+        section("LIVE-PRICE CURRENCY PAIRS / SYMBOLS")
+        form_layout.addWidget(label(
+            "Add the exact symbol your broker uses (for example EURUSD or EURUSD.a). "
+            "These symbols appear in Live Prices and are checked against each MT5 account.",
+            7,
+        ))
+        self._symbols_layout = QVBoxLayout()
+        self._symbols_layout.setSpacing(4)
+        form_layout.addLayout(self._symbols_layout)
+        for symbol in get_watch_symbols():
+            self._add_symbol(symbol)
+        add_symbol_row = QHBoxLayout()
+        self._new_symbol = QLineEdit()
+        self._new_symbol.setPlaceholderText("New symbol, e.g. EURUSD")
+        self._new_symbol.setFont(QFont(UI_FONT_FAMILY, 8))
+        self._new_symbol.setFixedHeight(28)
+        self._new_symbol.setStyleSheet(edit_style)
+        add_symbol_row.addWidget(self._new_symbol, stretch=1)
+        add_symbol_btn = QPushButton("+  ADD PAIR")
+        add_symbol_btn.setFixedHeight(28)
+        add_symbol_btn.setFont(QFont(UI_FONT_FAMILY, 8, QFont.Weight.Bold))
+        add_symbol_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        add_symbol_btn.setStyleSheet(
+            f"QPushButton {{ color: {C.PRI}; background: transparent; "
+            f"border: 1px solid {C.BORDER}; border-radius: 3px; }}"
+        )
+        add_symbol_btn.clicked.connect(self._add_symbol_from_input)
+        add_symbol_row.addWidget(add_symbol_btn)
+        form_layout.addLayout(add_symbol_row)
+
+        section("READ-ONLY METATRADER 5 ACCOUNTS")
+        form_layout.addWidget(label(
+            "Use broker-issued investor passwords only. Passwords stay in the OS "
+            "credential vault. Leave an existing password blank to keep it unchanged.",
+            7,
+        ))
+        self._accounts_layout = QVBoxLayout()
+        self._accounts_layout.setSpacing(6)
+        form_layout.addLayout(self._accounts_layout)
+        for account in get_mt5_accounts():
+            self._add_account(account)
+        self._active_account = QComboBox()
+        self._active_account.setFont(QFont(UI_FONT_FAMILY, 8))
+        self._active_account.setStyleSheet(
+            f"QComboBox {{ background: #000d12; color: {C.TEXT}; "
+            f"border: 1px solid {C.BORDER}; padding: 4px; }}"
+        )
+        form_layout.addWidget(label("PRIMARY ACCOUNT FOR MARKET QUOTES", 7))
+        form_layout.addWidget(self._active_account)
+        self._refresh_active_accounts(config.get("mt5_active_account_id", ""))
+
+        add_btn = QPushButton("+  ADD ACCOUNT")
+        add_btn.setFixedHeight(28)
+        add_btn.setFont(QFont(UI_FONT_FAMILY, 8, QFont.Weight.Bold))
+        add_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        add_btn.setStyleSheet(
+            f"QPushButton {{ color: {C.PRI}; background: transparent; "
+            f"border: 1px solid {C.BORDER}; border-radius: 3px; }}"
+        )
+        add_btn.clicked.connect(lambda: self._add_account({}))
+        form_layout.addWidget(add_btn)
+
+        section("GEMINI")
+        key_col, self._api_key = field(
+            "API KEY", "", "Leave blank to keep the saved key; enter a new key to replace it"
+        )
+        self._api_key.setEchoMode(QLineEdit.EchoMode.Password)
+        form_layout.addLayout(key_col)
+
+        section("OPERATING SYSTEM")
+        self._os_name = QComboBox()
+        self._os_name.addItems(["windows", "mac", "linux"])
+        selected_os = str(config.get("os_system", "") or "").lower()
+        index = self._os_name.findText(selected_os)
+        self._os_name.setCurrentIndex(index if index >= 0 else 0)
+        self._os_name.setStyleSheet(
+            f"QComboBox {{ background: #000d12; color: {C.TEXT}; "
+            f"border: 1px solid {C.BORDER}; padding: 4px; }}"
+        )
+        form_layout.addWidget(self._os_name)
+
+        self._error_lbl = label("", 8, False, C.RED)
+        layout.addWidget(self._error_lbl)
+        button = QPushButton("▸  SAVE TRADING SETTINGS")
+        button.setFixedHeight(34)
+        button.setFont(QFont(UI_FONT_FAMILY, 9, QFont.Weight.Bold))
+        button.setCursor(Qt.CursorShape.PointingHandCursor)
+        button.setStyleSheet(
+            f"QPushButton {{ color: {C.PRI}; background: transparent; "
+            f"border: 1px solid {C.PRI_DIM}; border-radius: 3px; }}"
+            f"QPushButton:hover {{ background: {C.PRI_GHO}; }}"
+        )
+        button.clicked.connect(self._submit)
+        layout.addWidget(button)
+        self._refresh_active_accounts(config.get("mt5_active_account_id", ""))
+
+    def _add_account(self, account):
+        row_widget = QWidget()
+        row_widget.setStyleSheet(
+            f"QWidget {{ background: {C.PANEL}; border: 1px solid {C.BORDER}; }}"
+        )
+        row_layout = QVBoxLayout(row_widget)
+        row_layout.setContentsMargins(7, 5, 7, 5)
+        row_layout.setSpacing(4)
+        top = QHBoxLayout()
+        name = QLineEdit(str(account.get("name", "")))
+        name.setPlaceholderText("Account name (optional)")
+        login = QLineEdit(str(account.get("login", "")))
+        login.setPlaceholderText("Account number")
+        server = QLineEdit(str(account.get("server", "")))
+        server.setPlaceholderText("Broker server")
+        password = QLineEdit()
+        password.setPlaceholderText("Investor password; blank keeps saved password")
+        password.setEchoMode(QLineEdit.EchoMode.Password)
+        for edit in (name, login, server, password):
+            edit.setFont(QFont(UI_FONT_FAMILY, 8))
+            edit.setFixedHeight(27)
+            edit.setStyleSheet(
+                f"QLineEdit {{ background: #000d12; color: {C.TEXT}; "
+                f"border: 1px solid {C.BORDER}; padding: 3px 5px; }}"
+            )
+        remove = QPushButton("×")
+        remove.setFixedSize(25, 25)
+        remove.setToolTip("Remove this account")
+        top.addWidget(name, 2)
+        top.addWidget(login, 1)
+        top.addWidget(server, 2)
+        top.addWidget(remove)
+        row_layout.addLayout(top)
+        row_layout.addWidget(password)
+        self._accounts_layout.addWidget(row_widget)
+        editor = {
+            "widget": row_widget, "name": name, "login": login,
+            "server": server, "password": password,
+        }
+        self._accounts.append(editor)
+        remove.clicked.connect(lambda: self._remove_account(editor))
+        for edit in (name, login, server):
+            edit.textChanged.connect(self._refresh_active_accounts)
+        self._refresh_active_accounts()
+
+    def _add_symbol(self, symbol):
+        row_widget = QWidget()
+        row_layout = QHBoxLayout(row_widget)
+        row_layout.setContentsMargins(0, 0, 0, 0)
+        row_layout.setSpacing(6)
+        edit = QLineEdit(str(symbol or "").strip().upper())
+        edit.setFont(QFont(UI_FONT_FAMILY, 8))
+        edit.setFixedHeight(27)
+        edit.setStyleSheet(
+            f"QLineEdit {{ background: #000d12; color: {C.TEXT}; "
+            f"border: 1px solid {C.BORDER}; padding: 3px 5px; }}"
+        )
+        remove = QPushButton("REMOVE")
+        remove.setFixedHeight(25)
+        remove.setFont(QFont(UI_FONT_FAMILY, 7))
+        remove.setCursor(Qt.CursorShape.PointingHandCursor)
+        remove.setStyleSheet(
+            f"QPushButton {{ color: {C.TEXT_DIM}; background: transparent; "
+            f"border: 1px solid {C.BORDER}; border-radius: 3px; }}"
+        )
+        row_layout.addWidget(edit, stretch=1)
+        row_layout.addWidget(remove)
+        self._symbols_layout.addWidget(row_widget)
+        row = (row_widget, edit)
+        self._symbol_rows.append(row)
+        remove.clicked.connect(lambda: self._remove_symbol(row))
+
+    def _add_symbol_from_input(self):
+        symbol = self._new_symbol.text().strip().upper()
+        if not symbol:
+            self._error_lbl.setText("Enter a broker symbol to add.")
+            return
+        if symbol in [edit.text().strip().upper() for _, edit in self._symbol_rows]:
+            self._error_lbl.setText(f"{symbol} is already in the live-price list.")
+            return
+        self._add_symbol(symbol)
+        self._new_symbol.clear()
+        self._error_lbl.clear()
+
+    def _remove_symbol(self, row):
+        self._symbol_rows.remove(row)
+        row[0].deleteLater()
+
+    def _remove_account(self, editor):
+        self._accounts.remove(editor)
+        editor["widget"].deleteLater()
+        self._refresh_active_accounts()
+
+    def _refresh_active_accounts(self, selected=""):
+        if not hasattr(self, "_active_account"):
+            return
+        previous = selected or self._active_account.currentData()
+        self._active_account.clear()
+        for editor in self._accounts:
+            login = editor["login"].text().strip()
+            server = editor["server"].text().strip()
+            if login and server:
+                identifier = f"{login}@{server}"
+                self._active_account.addItem(
+                    editor["name"].text().strip() or identifier, identifier
+                )
+        index = self._active_account.findData(previous)
+        if index >= 0:
+            self._active_account.setCurrentIndex(index)
+
+    def _submit(self):
+        strategy = self._strategy.text().strip()
+        if not strategy:
+            self._error_lbl.setText("Describe your trading style or primary setup.")
+            return
+        try:
+            risk = float(self._risk.text().strip())
+            daily_loss = float(self._daily_loss.text().strip())
+            max_trades = int(self._max_trades.text().strip())
+        except ValueError:
+            self._error_lbl.setText(
+                "Enter numeric values for risk, daily loss limit, and trades per day."
+            )
+            return
+        if not 0 < risk <= 10 or not risk <= daily_loss <= 100 or not 1 <= max_trades <= 100:
+            self._error_lbl.setText(
+                "Use risk from 0.01–10%, a daily limit at least as high as per-trade "
+                "risk and no more than 100%, and 1–100 trades per day."
+            )
+            return
+        accounts = [
+            {
+                "name": editor["name"].text().strip(),
+                "login": editor["login"].text().strip(),
+                "server": editor["server"].text().strip(),
+                "password": editor["password"].text(),
+            }
+            for editor in self._accounts
+        ]
+        symbols = [edit.text().strip().upper() for _, edit in self._symbol_rows]
+        if not symbols or any(not symbol for symbol in symbols):
+            self._error_lbl.setText("Keep at least one complete live-price symbol.")
+            return
+        self.saved.emit({
+            "profile": {
+                "strategy": strategy[:180],
+                "markets_session": self._markets.text().strip()[:180],
+                "risk_per_trade_pct": risk,
+                "daily_loss_limit_pct": daily_loss,
+                "max_trades_per_day": max_trades,
+                "common_challenge": self._challenge.text().strip()[:180],
+            },
+            "accounts": accounts,
+            "watch_symbols": symbols,
+            "active_account_id": str(self._active_account.currentData() or ""),
+            "gemini_api_key": self._api_key.text().strip(),
+            "os_system": self._os_name.currentText(),
+        })
 
 
 class HueWheel(QWidget):
@@ -2761,7 +3269,7 @@ class RemoteKeyOverlay(QWidget):
 
         self._update_qr(auto_login_url)
 
-        lay.addWidget(_lbl("Scan with phone camera to connect instantly", 8, color=C.TEXT_DIM))
+        lay.addWidget(_lbl("On the same trusted Wi-Fi, scan to connect", 8, color=C.TEXT_DIM))
 
         sep2 = QFrame(); sep2.setFrameShape(QFrame.Shape.HLine)
         sep2.setStyleSheet(f"color: {C.BORDER}; margin: 1px 0;")
@@ -2978,6 +3486,7 @@ class MainWindow(QMainWindow):
         self.on_remote_clicked = None   # callable: () -> (url, key) | None
         self.on_interrupt      = None   # callable: () -> None — stop JARVIS mid-speech
         self.on_voice_change   = None   # callable: () -> None — rebuild session with new voice
+        self.on_trading_settings_change = None
         self.on_audio_device_change = None  # callable: () -> None — reopen audio streams
         self.on_trading_screen_watch = None
         self._confirm_overlay  = None   # live ConfirmBanner, if one is on screen
@@ -3691,7 +4200,7 @@ class MainWindow(QMainWindow):
         self._title_lbl.setFont(QFont(BRAND_FONT_FAMILY, 17, QFont.Weight.Bold))
         self._title_lbl.setStyleSheet(f"color: {C.PRI}; background: transparent;")
         mid.addWidget(self._title_lbl)
-        self._sub_lbl = QLabel("Personal Market Intelligence")
+        self._sub_lbl = QLabel("Personal Trading Assistant")
         self._sub_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._sub_lbl.setFont(QFont(UI_FONT_FAMILY, 7))
         self._sub_lbl.setStyleSheet(f"color: {C.PRI_DIM}; background: transparent;")
@@ -3746,36 +4255,16 @@ class MainWindow(QMainWindow):
         price_title.setStyleSheet(f"color:{C.TEXT_MED}; background:transparent;")
         prices_lay.addWidget(price_title)
 
+        self._market_prices_layout = prices_lay
+        self._market_tiles: dict[str, QWidget] = {}
         self._market_price_labels: dict[str, tuple[QLabel, QLabel]] = {}
-        for symbol in ("XAUUSD", "BTCUSD", "GBPUSD"):
-            tile = QFrame()
-            tile.setStyleSheet(
-                f"background:{C.PANEL2}; border:1px solid {C.BORDER}; border-radius:3px;"
-            )
-            tile_lay = QVBoxLayout(tile)
-            tile_lay.setContentsMargins(5, 5, 5, 5)
-            tile_lay.setSpacing(2)
-            symbol_lbl = QLabel(symbol)
-            symbol_lbl.setFont(QFont(HUD_FONT_FAMILY, 9, QFont.Weight.Bold))
-            symbol_lbl.setStyleSheet(f"color:{C.PRI}; background:transparent; border:none;")
-            price_lbl = QLabel("--")
-            price_lbl.setFont(QFont(MARKET_FONT_FAMILY, 10, QFont.Weight.Bold))
-            price_lbl.setStyleSheet(f"color:{C.WHITE}; background:transparent; border:none;")
-            detail_lbl = QLabel("Waiting for MT5")
-            detail_lbl.setFont(QFont(MARKET_FONT_FAMILY, 6))
-            detail_lbl.setStyleSheet(f"color:{C.TEXT_DIM}; background:transparent; border:none;")
-            detail_lbl.setWordWrap(True)
-            tile_lay.addWidget(symbol_lbl)
-            tile_lay.addWidget(price_lbl)
-            tile_lay.addWidget(detail_lbl)
-            prices_lay.addWidget(tile)
-            self._market_price_labels[symbol] = (price_lbl, detail_lbl)
 
         self._market_feed_status = QLabel("MT5 · waiting for quotes")
         self._market_feed_status.setFont(QFont(MARKET_FONT_FAMILY, 6))
         self._market_feed_status.setStyleSheet(f"color:{C.TEXT_DIM}; background:transparent;")
         self._market_feed_status.setWordWrap(True)
         prices_lay.addWidget(self._market_feed_status)
+        self._refresh_market_tiles()
         prices_lay.addStretch()
         self._left_stack.addWidget(prices_page)
 
@@ -3841,7 +4330,54 @@ class MainWindow(QMainWindow):
     def update_market_prices(self, markets: list[dict]) -> None:
         self._market_prices_sig.emit(markets)
 
+    def _refresh_market_tiles(self, symbols: list[str] | None = None) -> None:
+        if symbols is None:
+            from memory.config_manager import get_watch_symbols
+
+            symbols = get_watch_symbols()
+        symbols = list(dict.fromkeys(str(symbol).strip().upper() for symbol in symbols if symbol))
+        if symbols == list(self._market_price_labels):
+            return
+        for symbol, tile in list(self._market_tiles.items()):
+            if symbol not in symbols:
+                self._market_prices_layout.removeWidget(tile)
+                tile.deleteLater()
+                self._market_tiles.pop(symbol)
+                self._market_price_labels.pop(symbol, None)
+        for symbol in symbols:
+            if symbol in self._market_price_labels:
+                continue
+            tile = QFrame()
+            tile.setStyleSheet(
+                f"background:{C.PANEL2}; border:1px solid {C.BORDER}; border-radius:3px;"
+            )
+            tile_lay = QVBoxLayout(tile)
+            tile_lay.setContentsMargins(5, 5, 5, 5)
+            tile_lay.setSpacing(2)
+            symbol_lbl = QLabel(symbol)
+            symbol_lbl.setFont(QFont(HUD_FONT_FAMILY, 9, QFont.Weight.Bold))
+            symbol_lbl.setStyleSheet(f"color:{C.PRI}; background:transparent; border:none;")
+            price_lbl = QLabel("--")
+            price_lbl.setFont(QFont(MARKET_FONT_FAMILY, 10, QFont.Weight.Bold))
+            price_lbl.setStyleSheet(f"color:{C.WHITE}; background:transparent; border:none;")
+            detail_lbl = QLabel("Waiting for MT5")
+            detail_lbl.setFont(QFont(MARKET_FONT_FAMILY, 6))
+            detail_lbl.setStyleSheet(f"color:{C.TEXT_DIM}; background:transparent; border:none;")
+            detail_lbl.setWordWrap(True)
+            tile_lay.addWidget(symbol_lbl)
+            tile_lay.addWidget(price_lbl)
+            tile_lay.addWidget(detail_lbl)
+            status_index = self._market_prices_layout.indexOf(self._market_feed_status)
+            self._market_prices_layout.insertWidget(status_index, tile)
+            self._market_tiles[symbol] = tile
+            self._market_price_labels[symbol] = (price_lbl, detail_lbl)
+        for index, symbol in enumerate(symbols):
+            tile = self._market_tiles[symbol]
+            self._market_prices_layout.removeWidget(tile)
+            self._market_prices_layout.insertWidget(index, tile)
+
     def _show_market_prices(self, markets: list[dict]) -> None:
+        self._refresh_market_tiles()
         by_watch_symbol = {item.get("watch_symbol", item.get("symbol")): item for item in markets}
         updated = time.strftime("%H:%M:%S")
         have_quotes = False
@@ -3879,20 +4415,66 @@ class MainWindow(QMainWindow):
     def _build_right_panel(self) -> QWidget:
         w = QWidget()
         w.setFixedWidth(_RIGHT_W)
-        w.setStyleSheet(f"background: {C.DARK}; border-left: 1px solid {C.BORDER};")
+        w.setObjectName("RightPanel")
+        w.setStyleSheet(f"""
+            QWidget#RightPanel {{
+                background: {C.DARK};
+                border-left: 1px solid {C.BORDER};
+            }}
+        """)
         lay = QVBoxLayout(w)
-        lay.setContentsMargins(8, 8, 8, 8)
-        lay.setSpacing(6)
+        lay.setContentsMargins(10, 10, 10, 10)
+        lay.setSpacing(8)
 
         def _sec(txt):
             l = QLabel(f"▸ {txt}")
             l.setFont(QFont(UI_FONT_FAMILY, 7, QFont.Weight.Bold))
-            l.setStyleSheet(f"color: {C.TEXT_MED}; background: transparent;")
+            l.setStyleSheet(
+                f"color: {C.TEXT_MED}; background: transparent; letter-spacing: 1px;"
+            )
             return l
 
-        lay.addWidget(_sec("ACTIVITY LOG"))
-        self._log = LogWidget()
-        lay.addWidget(self._log, stretch=1)
+        command_header = QHBoxLayout()
+        command_header.addWidget(_sec("COMMAND INPUT"))
+        command_header.addStretch()
+        esc_hint = QLabel("ESC")
+        esc_hint.setFont(QFont(MARKET_FONT_FAMILY, 7, QFont.Weight.Bold))
+        esc_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        esc_hint.setStyleSheet(
+            f"color:{C.MUTED_C}; background:#140008; "
+            f"border:1px solid {C.MUTED_C}; border-radius:3px; padding:2px 5px;"
+        )
+        command_header.addWidget(esc_hint)
+        lay.addLayout(command_header)
+
+        self._interrupt_btn = QPushButton("■  STOP")
+        self._interrupt_btn.setFixedSize(66, 30)
+        self._interrupt_btn.setFont(QFont(UI_FONT_FAMILY, 7, QFont.Weight.Bold))
+        self._interrupt_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._interrupt_btn.setToolTip("Interrupt JARVIS immediately (Esc)")
+        self._interrupt_btn.setAccessibleName("Interrupt JARVIS")
+        self._interrupt_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: #140008; color: {C.MUTED_C};
+                border: 1px solid {C.MUTED_C}; border-radius: 4px;
+                padding: 0 5px;
+            }}
+            QPushButton:hover {{
+                background: #26000f; border-color: #ff6688; color: {C.WHITE};
+            }}
+            QPushButton:pressed {{ background: #360015; }}
+        """)
+        self._interrupt_btn.clicked.connect(self._do_interrupt)
+
+        lay.addLayout(self._build_input_row())
+
+        self._mute_btn = QPushButton("🎙  MICROPHONE ACTIVE")
+        self._mute_btn.setFixedHeight(30)
+        self._mute_btn.setFont(QFont(UI_FONT_FAMILY, 8, QFont.Weight.Bold))
+        self._mute_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._mute_btn.clicked.connect(self._toggle_mute)
+        self._style_mute_btn()
+        lay.addWidget(self._mute_btn)
 
         sep = QFrame(); sep.setFrameShape(QFrame.Shape.HLine)
         sep.setStyleSheet(f"color: {C.BORDER}; margin: 2px 0;")
@@ -3912,36 +4494,27 @@ class MainWindow(QMainWindow):
         sep2 = QFrame(); sep2.setFrameShape(QFrame.Shape.HLine)
         sep2.setStyleSheet(f"color: {C.BORDER}; margin: 2px 0;")
         lay.addWidget(sep2)
+        activity_header = QHBoxLayout()
+        activity_header.addWidget(_sec("ACTIVITY // TERMINAL"))
+        activity_header.addStretch()
+        live_badge = QLabel("●  LIVE")
+        live_badge.setFont(QFont(MARKET_FONT_FAMILY, 7, QFont.Weight.Bold))
+        live_badge.setStyleSheet(
+            f"""
+            color:{C.GREEN};
+            background:rgba(0, 255, 136, 18);
+            border:1px solid rgba(0, 255, 136, 75);
+            border-radius:8px;
+            padding:3px 8px;
+            letter-spacing:1px;
+            """
+        )
+        activity_header.addWidget(live_badge)
+        lay.addLayout(activity_header)
 
-        lay.addWidget(_sec("COMMAND INPUT"))
-        lay.addLayout(self._build_input_row())
-
-        self._interrupt_btn = QPushButton("✋  INTERRUPT  [ESC]")
-        self._interrupt_btn.setFixedHeight(34)
-        self._interrupt_btn.setFont(QFont(UI_FONT_FAMILY, 8, QFont.Weight.Bold))
-        self._interrupt_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._interrupt_btn.setStyleSheet(f"""
-            QPushButton {{
-                background: #140008; color: {C.MUTED_C};
-                border: 1px solid {C.MUTED_C}; border-radius: 3px;
-            }}
-            QPushButton:hover {{
-                background: #200010; border: 1px solid #ff6688;
-            }}
-            QPushButton:pressed {{
-                background: #300018;
-            }}
-        """)
-        self._interrupt_btn.clicked.connect(self._do_interrupt)
-        lay.addWidget(self._interrupt_btn)
-
-        self._mute_btn = QPushButton("🎙  MICROPHONE ACTIVE")
-        self._mute_btn.setFixedHeight(30)
-        self._mute_btn.setFont(QFont(UI_FONT_FAMILY, 8, QFont.Weight.Bold))
-        self._mute_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._mute_btn.clicked.connect(self._toggle_mute)
-        self._style_mute_btn()
-        lay.addWidget(self._mute_btn)
+        self._log = LogWidget()
+        self._log.setMinimumHeight(120)
+        lay.addWidget(self._log, stretch=1)
 
         return w
 
@@ -4024,6 +4597,14 @@ class MainWindow(QMainWindow):
         cust_btn.setStyleSheet(_BTN_STYLE_DIM)
         cust_btn.clicked.connect(self._open_customize)
         lay.addWidget(cust_btn)
+
+        trading_settings_btn = QPushButton("▣  TRADING SETTINGS")
+        trading_settings_btn.setFixedHeight(26)
+        trading_settings_btn.setFont(QFont(UI_FONT_FAMILY, 7, QFont.Weight.Bold))
+        trading_settings_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        trading_settings_btn.setStyleSheet(_BTN_STYLE_PRI)
+        trading_settings_btn.clicked.connect(self._open_trading_settings)
+        lay.addWidget(trading_settings_btn)
 
         self._brief_btn = QPushButton()
         self._brief_btn.setFixedHeight(26)
@@ -4182,6 +4763,7 @@ class MainWindow(QMainWindow):
         """)
         send.clicked.connect(self._send)
         row.addWidget(send)
+        row.addWidget(self._interrupt_btn)
         return row
 
     def _build_content_panel(self) -> QWidget:
@@ -4343,8 +4925,10 @@ class MainWindow(QMainWindow):
         self._trading_summary_lbl.setStyleSheet(f"color: {C.TEXT_MED}; background: transparent;")
         lay.addWidget(self._trading_summary_lbl)
 
-        self._trading_table = QTableWidget(0, 5)
-        self._trading_table.setHorizontalHeaderLabels(["MONTH", "TRADES", "MADE", "LOST", "NET"])
+        self._trading_table = QTableWidget(0, 6)
+        self._trading_table.setHorizontalHeaderLabels(
+            ["ACCOUNT", "MONTH", "TRADES", "MADE", "LOST", "NET"]
+        )
         self._trading_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._trading_table.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
         self._trading_table.setFont(QFont(MARKET_FONT_FAMILY, 8))
@@ -4376,21 +4960,35 @@ class MainWindow(QMainWindow):
             self._trading_table.setRowCount(0)
             return
 
-        rows = report.get("rows", [])
-        currency = report.get("currency", "")
-        total_trades = sum(int(row.get("trades", 0)) for row in rows)
-        total_made = sum(float(row.get("made", 0)) for row in rows)
-        total_lost = sum(float(row.get("lost", 0)) for row in rows)
-        total_net = sum(float(row.get("net", 0)) for row in rows)
-        self._trading_status_lbl.setText(f"{report.get('source', 'MT5')} · {len(rows)} months")
-        self._trading_summary_lbl.setText(
-            f"TRADES  {total_trades}    MADE  {total_made:.2f} {currency}    "
-            f"LOST  {total_lost:.2f} {currency}    NET  {total_net:.2f} {currency}"
+        reports = report.get("accounts") or [report]
+        monthly_rows = []
+        summaries = []
+        for account_report in reports:
+            rows = account_report.get("rows", [])
+            currency = account_report.get("currency", "")
+            account_id = str(
+                account_report.get("account_name")
+                or account_report.get("account_id")
+                or "Primary"
+            )
+            summaries.append(
+                f"{account_id}: {sum(int(row.get('trades', 0)) for row in rows)} trades, "
+                f"net {sum(float(row.get('net', 0)) for row in rows):.2f} {currency}"
+            )
+            monthly_rows.extend(
+                (account_id, currency, row) for row in reversed(rows)
+            )
+        self._trading_status_lbl.setText(
+            f"{report.get('source', 'MT5')} · {len(reports)} account(s)"
         )
-        self._trading_table.setRowCount(len(rows))
-        for row_index, row in enumerate(reversed(rows)):
+        errors = report.get("errors", [])
+        self._trading_summary_lbl.setText(
+            "  |  ".join(summaries + ([f"Unavailable: {'; '.join(errors)}"] if errors else []))
+        )
+        self._trading_table.setRowCount(len(monthly_rows))
+        for row_index, (account_id, currency, row) in enumerate(monthly_rows):
             values = (
-                row.get("month", ""), row.get("trades", 0),
+                account_id, row.get("month", ""), row.get("trades", 0),
                 f"{float(row.get('made', 0)):.2f} {currency}",
                 f"{float(row.get('lost', 0)):.2f} {currency}",
                 f"{float(row.get('net', 0)):.2f} {currency}",
@@ -5196,7 +5794,7 @@ class MainWindow(QMainWindow):
         if not hasattr(self, '_brief_btn'):
             return
         if enabled:
-            self._brief_btn.setText("☀  MORNING BRIEF: ON")
+            self._brief_btn.setText("☀  STARTUP GREETING: ON")
             self._brief_btn.setStyleSheet(f"""
                 QPushButton {{
                     background: #001a08; color: {C.GREEN};
@@ -5206,7 +5804,7 @@ class MainWindow(QMainWindow):
                 QPushButton:hover {{ background: #002010; }}
             """)
         else:
-            self._brief_btn.setText("☀  MORNING BRIEF: OFF")
+            self._brief_btn.setText("☀  STARTUP GREETING: OFF")
             self._brief_btn.setStyleSheet(f"""
                 QPushButton {{
                     background: transparent; color: {C.TEXT_DIM};
@@ -5255,7 +5853,7 @@ class MainWindow(QMainWindow):
         display = self._assistant_name.upper()
         self.setWindowTitle(f"{display} — {APP_VERSION}")
         self._title_lbl.setText(display)
-        self._sub_lbl.setText("Personal Market Intelligence")
+        self._sub_lbl.setText("Personal Trading Assistant")
         self._log._ai_name_lc = self._assistant_name.lower()
         self.hud._assistant_name = display
 
@@ -5325,6 +5923,52 @@ class MainWindow(QMainWindow):
         ov = MemoryOverlay(parent=self.centralWidget())
         self._centre_overlay(ov)
         self._memory_overlay = ov
+
+    def _open_trading_settings(self):
+        if getattr(self, "_trading_settings_overlay", None):
+            self._trading_settings_overlay.hide()
+        ov = TradingSettingsOverlay(parent=self.centralWidget())
+        ov.saved.connect(self._save_trading_settings)
+        cw = self.centralWidget()
+        ow = min(TradingSettingsOverlay._OW, cw.width() - 24)
+        oh = min(TradingSettingsOverlay._OH, cw.height() - 16)
+        ov.setGeometry((cw.width() - ow) // 2, (cw.height() - oh) // 2, ow, oh)
+        ov.show()
+        ov.raise_()
+        self._trading_settings_overlay = ov
+
+    def _save_trading_settings(self, settings: dict):
+        overlay = self._trading_settings_overlay
+        try:
+            from memory.config_manager import (
+                save_api_keys, save_mt5_accounts, save_trader_profile,
+                save_watch_symbols,
+            )
+
+            save_watch_symbols(settings["watch_symbols"])
+            save_mt5_accounts(
+                settings["accounts"], settings["active_account_id"]
+            )
+            save_trader_profile(settings["profile"])
+            if settings["gemini_api_key"]:
+                save_api_keys(settings["gemini_api_key"])
+            config = _read_full_config()
+            config["os_system"] = settings["os_system"]
+            API_FILE.write_text(json.dumps(config, indent=4), encoding="utf-8")
+        except (RuntimeError, ValueError, OSError) as exc:
+            overlay._error_lbl.setText(f"Settings could not be saved: {exc}")
+            self._log.append_log(f"ERR: Trading settings could not be saved: {exc}")
+            return
+
+        overlay.hide()
+        self._refresh_market_tiles(settings["watch_symbols"])
+        self.update_market_prices([])
+        self._log.append_log(
+            "SYS: Trading plan, live-price symbols, and account settings saved. "
+            "MT5 monitoring will use all configured read-only accounts."
+        )
+        if self.on_trading_settings_change:
+            self.on_trading_settings_change()
 
     # ── Irreversible-action confirmation ─────────────────────────────────────
 
@@ -5458,17 +6102,21 @@ class MainWindow(QMainWindow):
         self.hud.speaking = (state == "SPEAKING")
 
     def _check_config(self) -> bool:
-        if not API_FILE.exists(): return False
         try:
-            d = json.loads(API_FILE.read_text(encoding="utf-8"))
-            return bool(d.get("gemini_api_key"))
+            from memory.config_manager import get_gemini_key, get_trader_profile
+
+            return bool(
+                get_gemini_key()
+                and get_trader_profile().get("strategy")
+                and _read_full_config().get("trader_profile_setup_complete")
+            )
         except Exception:
             return False
 
     def _show_setup(self):
         ov = SetupOverlay(self.centralWidget())
         cw = self.centralWidget()
-        ow, oh = 460, 390
+        ow, oh = min(700, cw.width() - 32), min(650, cw.height() - 24)
         ov.setGeometry(
             (cw.width()  - ow) // 2,
             (cw.height() - oh) // 2,
@@ -5478,19 +6126,34 @@ class MainWindow(QMainWindow):
         ov.show()
         self._overlay = ov
 
-    def _on_setup_done(self, key: str, os_name: str):
-        os.makedirs(CONFIG_DIR, exist_ok=True)
-        API_FILE.write_text(
-            json.dumps({"gemini_api_key": key, "os_system": os_name}, indent=4),
-            encoding="utf-8",
-        )
+    def _on_setup_done(self, setup: dict, os_name: str):
+        from memory.config_manager import save_trader_setup
+
+        try:
+            save_trader_setup(
+                setup["gemini_api_key"],
+                os_name,
+                setup["trader_profile"],
+                setup["mt5_login"],
+                setup["mt5_server"],
+                setup["mt5_investor_password"],
+            )
+        except (RuntimeError, ValueError, OSError) as exc:
+            if self._overlay:
+                self._overlay._error_lbl.setText(f"Setup could not be saved: {exc}")
+            self._log.append_log(f"ERR: Setup could not be saved: {exc}")
+            return
         self._ready = True
         if self._overlay:
             self._overlay.hide()
             self._overlay = None
         self._apply_state("LISTENING")
         self._assistant_name = _read_full_config().get("assistant_name", "JARVIS") or "JARVIS"
-        self._log.append_log(f"SYS: Initialised. OS={os_name.upper()}. {self._assistant_name} online.")
+        mt5_status = "MT5 investor access configured" if setup["mt5_login"] else "MT5 not configured"
+        self._log.append_log(
+            f"SYS: Initialised. OS={os_name.upper()}; {mt5_status}. "
+            f"{self._assistant_name} online."
+        )
 
 
 class _RootShim:
@@ -5558,6 +6221,14 @@ class JarvisUI:
     @on_voice_change.setter
     def on_voice_change(self, cb):
         self._win.on_voice_change = cb
+
+    @property
+    def on_trading_settings_change(self):
+        return self._win.on_trading_settings_change
+
+    @on_trading_settings_change.setter
+    def on_trading_settings_change(self, cb):
+        self._win.on_trading_settings_change = cb
 
     @property
     def on_audio_device_change(self):
