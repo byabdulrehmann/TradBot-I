@@ -7,6 +7,18 @@ A real-time voice AI that can hear, see, speak, and control your computer — on
 
 ---
 
+## 🎬 Demo
+
+![TradBot-I HUD with the holographic face, live market prices, activity log and web search results](docs/screenshot.png)
+
+**Voice conversation:** JARVIS greets the user, reports a market condition, introduces itself and answers a follow-up question, all by voice.
+
+![TradBot-I voice conversation demo](docs/jarvis-demo.gif)
+
+[Watch the full demo with sound (MP4)](docs/jarvis-demo.mp4)
+
+---
+
 ## ✨ Overview
 
 **TradBot-I is the release where the assistant gets a face.** A holographic head sits at the centre of the HUD and **speaks your assistant's words with real lip-sync** — not a jaw flapping to the volume meter, but actual mouth shapes: lips closing on *m*, *b*, *p*, spreading on *i*, rounding on *u*. Brows ride the sentence, the eyes flick between fixation points, and it blinks. Turn the sound down and you can follow roughly what it just said.
