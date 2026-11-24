@@ -490,7 +490,7 @@ TradBot-I/
 
 ## 🔒 Your Data
 
-Everything stays on your machine. There is no MARK server, no telemetry and no account.
+Everything stays on your machine. There is no server, no telemetry and no account.
 
 | What | Where | Notes |
 |---|---|---|
